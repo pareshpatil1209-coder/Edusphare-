@@ -1,0 +1,89 @@
+{
+  "entities": {
+    "UserProfile": {
+      "title": "UserProfile",
+      "description": "Represents a secondary or higher secondary student profile",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string", "description": "Student UID matching Firebase Auth" },
+        "displayName": { "type": "string", "description": "Student full or display name" },
+        "email": { "type": "string", "description": "Student email address" },
+        "photoUrl": { "type": "string", "description": "Student profile photo URL" },
+        "preferredLanguage": { "type": "string", "description": "Interface language: en, hi, gu, sa" },
+        "educationBoard": { "type": "string", "description": "Educational board such as CBSE, ICSE, GSEB, State Board" },
+        "classLevel": { "type": "string", "description": "Grade level such as Class 9, Class 10, Class 11, Class 12" },
+        "stream": { "type": "string", "description": "Academic stream: Science, Commerce, Arts, General" },
+        "onboardingCompleted": { "type": "boolean", "description": "Flag indicating onboarding wizard completion" },
+        "createdAt": { "type": "string", "format": "date-time", "description": "Server timestamp of creation" },
+        "updatedAt": { "type": "string", "format": "date-time", "description": "Server timestamp of last update" }
+      },
+      "required": ["uid", "displayName", "email", "onboardingCompleted", "createdAt", "updatedAt"]
+    },
+    "Bookmark": {
+      "title": "Bookmark",
+      "description": "Saved study material, notes, or test questions",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "description": "Unique bookmark ID" },
+        "userId": { "type": "string", "description": "Owner student UID" },
+        "title": { "type": "string", "description": "Bookmark title" },
+        "type": { "type": "string", "description": "Bookmark type: note, question, chapter, code" },
+        "subject": { "type": "string", "description": "Subject name" },
+        "referenceId": { "type": "string", "description": "ID of reference material or question" },
+        "createdAt": { "type": "string", "format": "date-time", "description": "Bookmark timestamp" }
+      },
+      "required": ["id", "userId", "title", "type", "createdAt"]
+    },
+    "LearningProgress": {
+      "title": "LearningProgress",
+      "description": "Course or subject progress record",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "description": "Progress entry ID" },
+        "userId": { "type": "string", "description": "Student UID" },
+        "courseId": { "type": "string", "description": "Course or chapter identifier" },
+        "courseType": { "type": "string", "description": "academic, language, or coding" },
+        "completedLessons": { "type": "array", "description": "List of completed lesson IDs" },
+        "progressPercent": { "type": "integer", "description": "Progress percentage from 0 to 100" },
+        "lastAccessedAt": { "type": "string", "format": "date-time", "description": "Last accessed timestamp" },
+        "updatedAt": { "type": "string", "format": "date-time", "description": "Update timestamp" }
+      },
+      "required": ["id", "userId", "courseId", "courseType", "progressPercent", "updatedAt"]
+    },
+    "TestResult": {
+      "title": "TestResult",
+      "description": "Student quiz or examination score report",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "description": "Result identifier" },
+        "userId": { "type": "string", "description": "Student UID" },
+        "testTitle": { "type": "string", "description": "Title of test or mock exam" },
+        "subject": { "type": "string", "description": "Subject name" },
+        "score": { "type": "integer", "description": "Marks obtained" },
+        "totalMarks": { "type": "integer", "description": "Maximum marks" },
+        "accuracy": { "type": "integer", "description": "Accuracy percentage 0-100" },
+        "weakTopics": { "type": "array", "description": "List of topics needing revision" },
+        "completedAt": { "type": "string", "format": "date-time", "description": "Completion timestamp" }
+      },
+      "required": ["id", "userId", "testTitle", "subject", "score", "totalMarks", "completedAt"]
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": "UserProfile",
+      "description": "Private student profile data"
+    },
+    "/users/{userId}/bookmarks/{bookmarkId}": {
+      "schema": "Bookmark",
+      "description": "Bookmarked study material for a student"
+    },
+    "/users/{userId}/learningProgress/{progressId}": {
+      "schema": "LearningProgress",
+      "description": "Tracked student completion across chapters and courses"
+    },
+    "/users/{userId}/testResults/{resultId}": {
+      "schema": "TestResult",
+      "description": "Scores, accuracy, and reports for tests taken by a student"
+    }
+  }
+}

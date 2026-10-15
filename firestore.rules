@@ -1,0 +1,131 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Default deny catch-all
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isOwner(userId) {
+      return isSignedIn() && request.auth.uid == userId;
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() > 0 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    function isValidUserProfile(data) {
+      return data.uid is string && data.uid == request.auth.uid &&
+             data.displayName is string && data.displayName.size() >= 1 && data.displayName.size() <= 100 &&
+             data.email is string && data.email.size() >= 3 && data.email.size() <= 150 &&
+             (!('photoUrl' in data) || data.photoUrl == null || (data.photoUrl is string && data.photoUrl.size() <= 500)) &&
+             (!('preferredLanguage' in data) || data.preferredLanguage == null || (data.preferredLanguage is string && data.preferredLanguage.size() <= 10)) &&
+             (!('educationBoard' in data) || data.educationBoard == null || (data.educationBoard is string && data.educationBoard.size() <= 50)) &&
+             (!('classLevel' in data) || data.classLevel == null || (data.classLevel is string && data.classLevel.size() <= 30)) &&
+             (!('stream' in data) || data.stream == null || (data.stream is string && data.stream.size() <= 30)) &&
+             data.onboardingCompleted is bool;
+    }
+
+    function isValidBookmark(data) {
+      return data.userId is string && data.userId == request.auth.uid &&
+             data.title is string && data.title.size() >= 1 && data.title.size() <= 200 &&
+             data.type is string && data.type in ['note', 'question', 'chapter', 'code'] &&
+             (!('subject' in data) || data.subject == null || (data.subject is string && data.subject.size() <= 100)) &&
+             (!('referenceId' in data) || data.referenceId == null || (data.referenceId is string && data.referenceId.size() <= 128));
+    }
+
+    function isValidLearningProgress(data) {
+      return data.userId is string && data.userId == request.auth.uid &&
+             data.courseId is string && data.courseId.size() > 0 && data.courseId.size() <= 128 &&
+             data.courseType is string && data.courseType in ['academic', 'language', 'coding'] &&
+             data.progressPercent is int && data.progressPercent >= 0 && data.progressPercent <= 100 &&
+             (!('completedLessons' in data) || (data.completedLessons is list && data.completedLessons.size() <= 500));
+    }
+
+    function isValidTestResult(data) {
+      return data.userId is string && data.userId == request.auth.uid &&
+             data.testTitle is string && data.testTitle.size() >= 1 && data.testTitle.size() <= 200 &&
+             data.subject is string && data.subject.size() >= 1 && data.subject.size() <= 100 &&
+             data.score is int && data.score >= 0 &&
+             data.totalMarks is int && data.totalMarks > 0 && data.score <= data.totalMarks &&
+             (!('accuracy' in data) || (data.accuracy is int && data.accuracy >= 0 && data.accuracy <= 100)) &&
+             (!('weakTopics' in data) || (data.weakTopics is list && data.weakTopics.size() <= 50));
+    }
+
+    // Student Profiles
+    match /users/{userId} {
+      allow get, list: if isOwner(userId);
+
+      allow create: if isOwner(userId) &&
+                       incoming().uid == userId &&
+                       incoming().createdAt is timestamp && incoming().createdAt <= request.time &&
+                       incoming().updatedAt is timestamp && incoming().updatedAt <= request.time &&
+                       isValidUserProfile(incoming());
+
+      allow update: if isOwner(userId) &&
+                       incoming().uid == existing().uid &&
+                       incoming().createdAt == existing().createdAt &&
+                       incoming().updatedAt is timestamp && incoming().updatedAt <= request.time &&
+                       isValidUserProfile(incoming()) &&
+                       incoming().diff(existing()).affectedKeys().hasOnly([
+                         'displayName', 'photoUrl', 'preferredLanguage',
+                         'educationBoard', 'classLevel', 'stream',
+                         'onboardingCompleted', 'updatedAt'
+                       ]);
+
+      allow delete: if isOwner(userId);
+
+      // Bookmarks Subcollection
+      match /bookmarks/{bookmarkId} {
+        allow get, list: if isOwner(userId);
+        allow create: if isOwner(userId) && isValidId(bookmarkId) &&
+                         incoming().userId == userId &&
+                         incoming().createdAt is timestamp && incoming().createdAt <= request.time &&
+                         isValidBookmark(incoming());
+        allow update: if isOwner(userId) && isValidId(bookmarkId) &&
+                         incoming().userId == existing().userId &&
+                         incoming().createdAt == existing().createdAt &&
+                         isValidBookmark(incoming());
+        allow delete: if isOwner(userId) && isValidId(bookmarkId);
+      }
+
+      // Learning Progress Subcollection
+      match /learningProgress/{progressId} {
+        allow get, list: if isOwner(userId);
+        allow create: if isOwner(userId) && isValidId(progressId) &&
+                         incoming().userId == userId &&
+                         incoming().updatedAt is timestamp && incoming().updatedAt <= request.time &&
+                         isValidLearningProgress(incoming());
+        allow update: if isOwner(userId) && isValidId(progressId) &&
+                         incoming().userId == existing().userId &&
+                         incoming().updatedAt is timestamp && incoming().updatedAt <= request.time &&
+                         isValidLearningProgress(incoming());
+        allow delete: if isOwner(userId) && isValidId(progressId);
+      }
+
+      // Test Results Subcollection (Append-only)
+      match /testResults/{resultId} {
+        allow get, list: if isOwner(userId);
+        allow create: if isOwner(userId) && isValidId(resultId) &&
+                         incoming().userId == userId &&
+                         incoming().completedAt is timestamp && incoming().completedAt <= request.time &&
+                         isValidTestResult(incoming());
+        allow update: if false; // Immutable exam history
+        allow delete: if isOwner(userId) && isValidId(resultId);
+      }
+    }
+  }
+}

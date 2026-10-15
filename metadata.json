@@ -1,0 +1,6 @@
+{
+  "name": "EduSphere",
+  "description": "Comprehensive educational platform for exam preparation, digital study materials, language learning, and coding academy.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
