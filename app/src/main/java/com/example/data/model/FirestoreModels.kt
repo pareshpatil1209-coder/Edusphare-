@@ -1,57 +1,70 @@
 package com.example.data.model
 
-import com.google.firebase.Timestamp
-import com.google.firebase.firestore.DocumentId
-import com.google.firebase.firestore.IgnoreExtraProperties
-import com.google.firebase.firestore.ServerTimestamp
-
-@IgnoreExtraProperties
 data class UserProfile(
     val uid: String = "",
-    val displayName: String = "",
     val email: String = "",
-    val photoUrl: String? = null,
-    val preferredLanguage: String? = "English",
-    val educationBoard: String? = "CBSE",
-    val classLevel: String? = "Class 10",
-    val stream: String? = "General",
-    val onboardingCompleted: Boolean = false,
-    @ServerTimestamp val createdAt: Timestamp? = null,
-    @ServerTimestamp val updatedAt: Timestamp? = null
+    val displayName: String = "",
+    val photoUrl: String = "",
+    val educationBoard: String = "GSEB",
+    val classLevel: String = "Class 10",
+    val targetExamYear: Int = 2026,
+    val preferredLanguage: String = "English",
+    val createdAt: Long = System.currentTimeMillis(),
+    val lastLoginAt: Long = System.currentTimeMillis()
 )
 
-@IgnoreExtraProperties
-data class BookmarkItem(
-    @DocumentId val id: String = "",
+data class SavedBookmark(
+    val id: String = "",
     val userId: String = "",
+    val resourceId: String = "",
     val title: String = "",
-    val type: String = "note", // note, question, chapter, code
-    val subject: String? = null,
-    val referenceId: String? = null,
-    @ServerTimestamp val createdAt: Timestamp? = null
+    val board: String = "",
+    val classLevel: String = "",
+    val subject: String = "",
+    val resourceType: String = "",
+    val savedAt: Long = System.currentTimeMillis()
 )
 
-@IgnoreExtraProperties
-data class LearningProgressItem(
-    @DocumentId val id: String = "",
+data class QuizResultDoc(
+    val id: String = "",
     val userId: String = "",
-    val courseId: String = "",
-    val courseType: String = "academic", // academic, language, coding
-    val completedLessons: List<String> = emptyList(),
-    val progressPercent: Int = 0,
-    @ServerTimestamp val lastAccessedAt: Timestamp? = null,
-    @ServerTimestamp val updatedAt: Timestamp? = null
-)
-
-@IgnoreExtraProperties
-data class TestResultItem(
-    @DocumentId val id: String = "",
-    val userId: String = "",
-    val testTitle: String = "",
+    val quizTitle: String = "",
     val subject: String = "",
     val score: Int = 0,
+    val totalQuestions: Int = 0,
+    val percentage: Float = 0f,
+    val timestamp: Long = System.currentTimeMillis()
+)
+
+data class LearningProgressDoc(
+    val id: String = "",
+    val userId: String = "",
+    val courseId: String = "",
+    val lessonId: String = "",
+    val isCompleted: Boolean = true,
+    val score: Int = 100,
+    val completedAt: Long = System.currentTimeMillis()
+)
+
+data class SavedMockPaperDoc(
+    val id: String = "",
+    val userId: String = "",
+    val title: String = "",
+    val board: String = "",
+    val classLevel: String = "",
+    val subject: String = "",
     val totalMarks: Int = 0,
-    val accuracy: Int = 0,
-    val weakTopics: List<String> = emptyList(),
-    @ServerTimestamp val completedAt: Timestamp? = null
+    val durationMinutes: Int = 0,
+    val generatedAt: Long = System.currentTimeMillis(),
+    val jsonContent: String = ""
+)
+
+data class SavedReportDoc(
+    val id: String = "",
+    val userId: String = "",
+    val generatedAt: Long = System.currentTimeMillis(),
+    val totalCompletedLessons: Int = 0,
+    val totalQuizzesTaken: Int = 0,
+    val averageScorePercentage: Float = 0f,
+    val summaryJson: String = ""
 )

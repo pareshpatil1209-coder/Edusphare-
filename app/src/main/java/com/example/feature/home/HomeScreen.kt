@@ -47,11 +47,13 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.data.model.EducationalSeedData
+import com.example.data.model.SubjectItem
 import com.example.data.model.UserProfile
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -82,11 +84,11 @@ fun HomeScreen(
             ) {
                 Column {
                     Text(
-                        text = "Hello, ${profile?.displayName ?: "Student"}! 🎓",
+                        text = "Hello, ${profile?.displayName?.ifEmpty { "Student" } ?: "Student"}! 🎓",
                         style = MaterialTheme.typography.headlineSmall.copy(fontWeight = FontWeight.Bold)
                     )
                     Text(
-                        text = "${profile?.classLevel ?: "Class 10"} • ${profile?.educationBoard ?: "CBSE"}",
+                        text = "${profile?.classLevel ?: "Class 10"} • ${profile?.educationBoard ?: "GSEB"}",
                         style = MaterialTheme.typography.bodyMedium,
                         color = MaterialTheme.colorScheme.primary,
                         fontWeight = FontWeight.Medium
@@ -101,7 +103,7 @@ fun HomeScreen(
                     contentAlignment = Alignment.Center
                 ) {
                     Text(
-                        text = (profile?.displayName?.take(1) ?: "S").uppercase(),
+                        text = (profile?.displayName?.take(1)?.ifEmpty { "S" } ?: "S").uppercase(),
                         style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
                         color = MaterialTheme.colorScheme.onPrimaryContainer
                     )
@@ -169,9 +171,9 @@ fun HomeScreen(
                             color = MaterialTheme.colorScheme.onPrimaryContainer
                         )
                         Text(
-                            text = "Ask questions, simplify formulas, or create a 7-day revision plan with voice read-aloud.",
+                            text = "Ask questions, generate custom revision papers, and clarify board exam concepts.",
                             style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.8f)
+                            color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.85f)
                         )
                     }
                 }
@@ -204,11 +206,11 @@ fun HomeScreen(
                     }
                     Spacer(modifier = Modifier.height(8.dp))
                     Text(
-                        text = "Physics: Electricity & Ohm's Law",
+                        text = "Mathematics: Real Numbers & Euclid's Lemma",
                         style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold)
                     )
                     Text(
-                        text = "Chapter 1 • 5/8 Topics Mastered",
+                        text = "Chapter 1 • Fundamental Theorem of Arithmetic",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
@@ -346,7 +348,7 @@ fun HomeScreen(
 @Composable
 fun QuickActionChip(
     title: String,
-    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    icon: ImageVector,
     color: Color,
     onClick: () -> Unit
 ) {
@@ -395,7 +397,7 @@ fun GoalMetricCard(
 
 @Composable
 fun SubjectCard(
-    subject: com.example.data.model.SubjectItem,
+    subject: SubjectItem,
     onClick: () -> Unit
 ) {
     Card(

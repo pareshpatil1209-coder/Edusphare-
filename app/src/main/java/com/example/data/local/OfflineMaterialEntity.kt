@@ -5,16 +5,16 @@ import androidx.room.PrimaryKey
 
 @Entity(tableName = "offline_materials")
 data class OfflineMaterialEntity(
-    @PrimaryKey val id: String,
+    @PrimaryKey
+    val id: String,
     val title: String,
-    val subject: String,
+    val board: String,
     val classLevel: String,
-    val educationBoard: String,
+    val subject: String,
     val chapter: String,
-    val type: String, // "notes", "paper", "formula", "textbook"
-    val content: String,
-    val summary: String,
-    val isBookmarked: Boolean = false,
-    val isDownloaded: Boolean = true,
+    val resourceType: String,
+    val language: String,
+    val publisher: String,
+    val fullTextContent: String,
     val downloadedAt: Long = System.currentTimeMillis()
 )

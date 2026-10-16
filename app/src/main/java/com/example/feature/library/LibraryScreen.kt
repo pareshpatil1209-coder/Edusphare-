@@ -2,6 +2,7 @@ package com.example.feature.library
 
 import android.content.Intent
 import android.net.Uri
+import android.speech.tts.TextToSpeech
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.background
@@ -28,25 +29,19 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
-import androidx.compose.material.icons.automirrored.filled.OpenInNew
 import androidx.compose.material.icons.filled.Bookmark
 import androidx.compose.material.icons.filled.BookmarkBorder
-import androidx.compose.material.icons.filled.Check
-import androidx.compose.material.icons.filled.Clear
-import androidx.compose.material.icons.filled.CloudDownload
+import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.DownloadDone
 import androidx.compose.material.icons.filled.FilterList
 import androidx.compose.material.icons.filled.MenuBook
-import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.filled.OpenInBrowser
 import androidx.compose.material.icons.filled.Search
-import androidx.compose.material.icons.filled.Stop
-import androidx.compose.material.icons.filled.VerifiedUser
+import androidx.compose.material.icons.filled.Share
 import androidx.compose.material.icons.filled.VolumeUp
 import androidx.compose.material3.Button
-import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
-import androidx.compose.material3.ElevatedCard
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
@@ -54,13 +49,14 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Scaffold
-import androidx.compose.material3.SnackbarHost
-import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
+import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -76,719 +72,454 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import com.example.data.local.EduSphereDatabase
-import com.example.data.local.OfflineMaterialEntity
 import com.example.data.model.AuthorizedEducationalCatalog
-import com.example.data.model.BookmarkItem
-import com.example.data.model.ChapterItem
 import com.example.data.model.EducationalResource
-import com.example.data.model.EducationalSeedData
+import com.example.data.model.ResourceType
 import com.example.data.repository.EduSphereRepository
-import com.example.feature.ai.EduSphereTtsManager
 import kotlinx.coroutines.launch
+import java.util.Locale
 
-@OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun LibraryScreen(
     repository: EduSphereRepository,
-    database: EduSphereDatabase,
-    ttsManager: EduSphereTtsManager,
-    onStartChapterQuiz: (ChapterItem) -> Unit
+    onNavigateBack: () -> Unit = {}
 ) {
     val context = LocalContext.current
-    val coroutineScope = rememberCoroutineScope()
-    val snackbarHostState = remember { SnackbarHostState() }
+    val scope = rememberCoroutineScope()
 
-    // Multi-dimensional filters
     var searchQuery by remember { mutableStateOf("") }
     var selectedBoard by remember { mutableStateOf("All") }
     var selectedClass by remember { mutableStateOf("All") }
     var selectedSubject by remember { mutableStateOf("All") }
-    var selectedResourceType by remember { mutableStateOf("All") }
+    var selectedType by remember { mutableStateOf<ResourceType?>(null) }
     var selectedLanguage by remember { mutableStateOf("All") }
-    var showFilterPanel by remember { mutableStateOf(false) }
 
-    // Active reading state
-    var viewingResource by remember { mutableStateOf<EducationalResource?>(null) }
-    var viewingChapter by remember { mutableStateOf<ChapterItem?>(null) }
+    var activeReadingResource by remember { mutableStateOf<EducationalResource?>(null) }
 
-    val bookmarks by repository.observeBookmarks().collectAsState(initial = emptyList())
-    val offlineMaterials by database.offlineMaterialDao().getAllOfflineMaterials().collectAsState(initial = emptyList())
-    val isSpeaking by ttsManager.isSpeaking.collectAsState()
+    // Text to Speech
+    var tts: TextToSpeech? by remember { mutableStateOf(null) }
+    var isTtsPlaying by remember { mutableStateOf(false) }
 
-    // Filter combined resources
-    val filteredResources = remember(
-        searchQuery, selectedBoard, selectedClass, selectedSubject, selectedResourceType, selectedLanguage
-    ) {
-        AuthorizedEducationalCatalog.resources.filter { res ->
-            val matchBoard = selectedBoard == "All" || res.board.equals(selectedBoard, ignoreCase = true)
-            val matchClass = selectedClass == "All" || res.classLevel.contains(selectedClass, ignoreCase = true)
-            val matchSubject = selectedSubject == "All" || res.subject.contains(selectedSubject, ignoreCase = true)
-            val matchType = selectedResourceType == "All" || res.resourceType.equals(selectedResourceType, ignoreCase = true)
-            val matchLang = selectedLanguage == "All" || res.language.equals(selectedLanguage, ignoreCase = true)
-            val matchSearch = searchQuery.isBlank() ||
-                    res.title.contains(searchQuery, ignoreCase = true) ||
-                    res.subject.contains(searchQuery, ignoreCase = true) ||
-                    res.chapter.contains(searchQuery, ignoreCase = true) ||
-                    res.summary.contains(searchQuery, ignoreCase = true)
-            matchBoard && matchClass && matchSubject && matchType && matchLang && matchSearch
+    DisposableEffect(Unit) {
+        tts = TextToSpeech(context) { status ->
+            if (status == TextToSpeech.SUCCESS) {
+                tts?.language = Locale.ENGLISH
+            }
+        }
+        onDispose {
+            tts?.stop()
+            tts?.shutdown()
         }
     }
 
-    // Back handler for detail views
-    BackHandler(enabled = viewingResource != null || viewingChapter != null) {
-        ttsManager.stop()
-        viewingResource = null
-        viewingChapter = null
-    }
+    if (activeReadingResource != null) {
+        val resource = activeReadingResource!!
+        val isOfflineSaved by repository.isMaterialSavedOffline(resource.id).collectAsState(initial = false)
 
-    Scaffold(
-        snackbarHost = { SnackbarHost(snackbarHostState) },
-        topBar = {
-            if (viewingResource != null) {
-                val res = viewingResource!!
-                val isBookmarked = bookmarks.any { it.referenceId == res.id }
-                val isDownloaded = offlineMaterials.any { it.id == res.id }
+        BackHandler {
+            tts?.stop()
+            isTtsPlaying = false
+            activeReadingResource = null
+        }
 
+        Scaffold(
+            topBar = {
                 TopAppBar(
                     title = {
-                        Text(
-                            text = res.title,
-                            maxLines = 1,
-                            style = MaterialTheme.typography.titleMedium
-                        )
+                        Column {
+                            Text(
+                                text = resource.title,
+                                style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
+                                maxLines = 1
+                            )
+                            Text(
+                                text = "${resource.board} • ${resource.classLevel} • ${resource.publisher}",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
                     },
                     navigationIcon = {
                         IconButton(onClick = {
-                            ttsManager.stop()
-                            viewingResource = null
+                            tts?.stop()
+                            isTtsPlaying = false
+                            activeReadingResource = null
                         }) {
-                            Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
+                            Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back to Library")
                         }
                     },
                     actions = {
-                        // Official link opener
+                        // TTS Read Aloud
                         IconButton(onClick = {
-                            try {
-                                val intent = Intent(Intent.ACTION_VIEW, Uri.parse(res.officialUrl))
-                                context.startActivity(intent)
-                            } catch (e: Exception) {
-                                coroutineScope.launch { snackbarHostState.showSnackbar("Unable to open browser") }
-                            }
-                        }) {
-                            Icon(Icons.AutoMirrored.Filled.OpenInNew, contentDescription = "Open Official Website")
-                        }
-
-                        // TTS Button
-                        IconButton(onClick = {
-                            if (isSpeaking) {
-                                ttsManager.stop()
+                            if (isTtsPlaying) {
+                                tts?.stop()
+                                isTtsPlaying = false
                             } else {
-                                val readText = "${res.title}. Published by ${res.source}. Summary: ${res.summary}. ${res.fullContent.take(600)}"
-                                ttsManager.speak(readText)
+                                val cleanText = resource.fullTextContent
+                                    .replace("#", "")
+                                    .replace("*", "")
+                                    .take(4000)
+                                tts?.speak(cleanText, TextToSpeech.QUEUE_FLUSH, null, "read_aloud")
+                                isTtsPlaying = true
                             }
                         }) {
                             Icon(
-                                imageVector = if (isSpeaking) Icons.Default.Stop else Icons.Default.VolumeUp,
+                                Icons.Default.VolumeUp,
                                 contentDescription = "Read Aloud",
-                                tint = if (isSpeaking) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface
+                                tint = if (isTtsPlaying) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
                             )
                         }
 
-                        // Bookmark
+                        // Save Offline
                         IconButton(onClick = {
-                            coroutineScope.launch {
-                                if (isBookmarked) {
-                                    val item = bookmarks.firstOrNull { it.referenceId == res.id }
-                                    if (item != null) {
-                                        repository.removeBookmark(item.id)
-                                        snackbarHostState.showSnackbar("Removed from bookmarks")
-                                    }
+                            scope.launch {
+                                if (isOfflineSaved) {
+                                    repository.removeMaterialOffline(resource.id)
                                 } else {
-                                    val item = BookmarkItem(
-                                        title = res.title,
-                                        type = "resource",
-                                        subject = res.subject,
-                                        referenceId = res.id
-                                    )
-                                    val added = repository.addBookmark(item)
-                                    if (added.isSuccess) {
-                                        snackbarHostState.showSnackbar("Bookmarked successfully!")
-                                    }
+                                    repository.saveMaterialOffline(resource)
                                 }
                             }
                         }) {
                             Icon(
-                                imageVector = if (isBookmarked) Icons.Default.Bookmark else Icons.Default.BookmarkBorder,
-                                contentDescription = "Bookmark",
-                                tint = if (isBookmarked) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface
+                                if (isOfflineSaved) Icons.Default.DownloadDone else Icons.Default.Download,
+                                contentDescription = "Save Offline",
+                                tint = if (isOfflineSaved) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
                             )
                         }
 
-                        // Download Offline
+                        // Open Official Link
                         IconButton(onClick = {
-                            coroutineScope.launch {
-                                val entity = OfflineMaterialEntity(
-                                    id = res.id,
-                                    title = res.title,
-                                    subject = res.subject,
-                                    classLevel = res.classLevel,
-                                    educationBoard = res.board,
-                                    chapter = res.chapter,
-                                    type = res.resourceType.lowercase().replace(" ", "_"),
-                                    content = res.fullContent,
-                                    summary = res.summary,
-                                    isBookmarked = isBookmarked,
-                                    isDownloaded = true
-                                )
-                                database.offlineMaterialDao().insertMaterial(entity)
-                                snackbarHostState.showSnackbar("Downloaded for offline reading! (Room DB)")
-                            }
+                            val intent = Intent(Intent.ACTION_VIEW, Uri.parse(resource.officialSourceUrl))
+                            context.startActivity(intent)
                         }) {
-                            Icon(
-                                imageVector = if (isDownloaded) Icons.Default.DownloadDone else Icons.Default.CloudDownload,
-                                contentDescription = "Download Offline",
-                                tint = if (isDownloaded) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface
-                            )
-                        }
-                    }
-                )
-            } else if (viewingChapter != null) {
-                val current = viewingChapter!!
-                val isBookmarked = bookmarks.any { it.referenceId == current.id }
-                TopAppBar(
-                    title = { Text(current.title, maxLines = 1) },
-                    navigationIcon = {
-                        IconButton(onClick = {
-                            ttsManager.stop()
-                            viewingChapter = null
-                        }) {
-                            Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
+                            Icon(Icons.Default.OpenInBrowser, contentDescription = "Open Source")
                         }
                     },
-                    actions = {
-                        IconButton(onClick = {
-                            if (isSpeaking) {
-                                ttsManager.stop()
-                            } else {
-                                ttsManager.speak("${current.title}. ${current.summary}. ${current.keyFormulasOrNotes.joinToString(". ")}")
-                            }
-                        }) {
-                            Icon(if (isSpeaking) Icons.Default.Stop else Icons.Default.VolumeUp, contentDescription = "TTS")
-                        }
-                        IconButton(onClick = {
-                            coroutineScope.launch {
-                                val entity = OfflineMaterialEntity(
-                                    id = current.id,
-                                    title = current.title,
-                                    subject = current.subjectId,
-                                    classLevel = "Class 10",
-                                    educationBoard = "GSEB/CBSE",
-                                    chapter = "Chapter ${current.number}",
-                                    type = "study_notes",
-                                    content = current.content,
-                                    summary = current.summary,
-                                    isBookmarked = isBookmarked,
-                                    isDownloaded = true
-                                )
-                                database.offlineMaterialDao().insertMaterial(entity)
-                                snackbarHostState.showSnackbar("Saved for offline reading!")
-                            }
-                        }) {
-                            Icon(Icons.Default.CloudDownload, contentDescription = "Download Offline")
-                        }
-                    }
+                    colors = TopAppBarDefaults.topAppBarColors(containerColor = MaterialTheme.colorScheme.surface)
                 )
             }
-        }
-    ) { padding ->
-        if (viewingResource != null) {
-            val res = viewingResource!!
+        ) { paddingValues ->
             Column(
                 modifier = Modifier
                     .fillMaxSize()
-                    .padding(padding)
-                    .padding(horizontal = 16.dp)
+                    .padding(paddingValues)
+                    .padding(horizontal = 20.dp)
                     .verticalScroll(rememberScrollState())
             ) {
-                Spacer(modifier = Modifier.height(10.dp))
-
-                // Metadata Badges
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Surface(
-                        color = MaterialTheme.colorScheme.primaryContainer,
-                        shape = RoundedCornerShape(8.dp)
-                    ) {
-                        Text(
-                            text = res.board,
-                            style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold),
-                            color = MaterialTheme.colorScheme.onPrimaryContainer,
-                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
-                        )
-                    }
-                    Surface(
-                        color = MaterialTheme.colorScheme.secondaryContainer,
-                        shape = RoundedCornerShape(8.dp)
-                    ) {
-                        Text(
-                            text = res.classLevel,
-                            style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.onSecondaryContainer,
-                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
-                        )
-                    }
-                    Surface(
-                        color = MaterialTheme.colorScheme.tertiaryContainer,
-                        shape = RoundedCornerShape(8.dp)
-                    ) {
-                        Text(
-                            text = res.resourceType,
-                            style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.onTertiaryContainer,
-                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
-                        )
-                    }
-                }
-
                 Spacer(modifier = Modifier.height(12.dp))
 
-                Text(
-                    text = res.title,
-                    style = MaterialTheme.typography.headlineSmall.copy(fontWeight = FontWeight.Bold)
-                )
-
-                Spacer(modifier = Modifier.height(6.dp))
-
-                // Source Attribution Card
+                // Verification and License Banner
                 Card(
-                    modifier = Modifier.fillMaxWidth(),
                     shape = RoundedCornerShape(12.dp),
-                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f))
+                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.5f)),
+                    modifier = Modifier.fillMaxWidth()
                 ) {
-                    Column(modifier = Modifier.padding(12.dp)) {
+                    Column(modifier = Modifier.padding(14.dp)) {
                         Row(verticalAlignment = Alignment.CenterVertically) {
-                            Icon(
-                                Icons.Default.VerifiedUser,
-                                contentDescription = null,
-                                tint = MaterialTheme.colorScheme.primary,
-                                modifier = Modifier.size(16.dp)
-                            )
-                            Spacer(modifier = Modifier.width(6.dp))
                             Text(
-                                text = "Authorized Source: ${res.source}",
-                                style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.SemiBold)
+                                text = "✓ Verified Curriculum Material",
+                                style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Bold),
+                                color = MaterialTheme.colorScheme.secondary
+                            )
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Text(
+                                text = "• ${resource.language}",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSecondaryContainer
                             )
                         }
                         Spacer(modifier = Modifier.height(4.dp))
                         Text(
-                            text = "Licensing: ${res.licensing} (${res.editionYear})",
+                            text = resource.licenseNotice,
                             style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                            color = MaterialTheme.colorScheme.onSecondaryContainer
                         )
-                        Spacer(modifier = Modifier.height(6.dp))
-                        OutlinedButton(
-                            onClick = {
-                                try {
-                                    val intent = Intent(Intent.ACTION_VIEW, Uri.parse(res.officialUrl))
-                                    context.startActivity(intent)
-                                } catch (e: Exception) {
-                                    coroutineScope.launch { snackbarHostState.showSnackbar("Unable to open portal") }
-                                }
-                            },
-                            shape = RoundedCornerShape(8.dp),
-                            modifier = Modifier.height(36.dp)
-                        ) {
-                            Icon(Icons.AutoMirrored.Filled.OpenInNew, contentDescription = null, modifier = Modifier.size(14.dp))
-                            Spacer(modifier = Modifier.width(6.dp))
-                            Text("Open Official Education Portal", fontSize = 12.sp)
-                        }
                     }
                 }
 
                 Spacer(modifier = Modifier.height(16.dp))
 
+                // Full Text Content Reader
                 Text(
-                    text = "Executive Summary:",
+                    text = resource.fullTextContent,
+                    style = MaterialTheme.typography.bodyLarge.copy(lineHeight = 26.sp),
+                    color = MaterialTheme.colorScheme.onSurface
+                )
+
+                Spacer(modifier = Modifier.height(32.dp))
+            }
+        }
+        return
+    }
+
+    val filteredResources = remember(
+        searchQuery, selectedBoard, selectedClass, selectedSubject, selectedType, selectedLanguage
+    ) {
+        AuthorizedEducationalCatalog.resources.filter { item ->
+            val matchesSearch = searchQuery.isBlank() ||
+                item.title.contains(searchQuery, ignoreCase = true) ||
+                item.chapter.contains(searchQuery, ignoreCase = true) ||
+                item.subject.contains(searchQuery, ignoreCase = true)
+            val matchesBoard = selectedBoard == "All" || item.board.equals(selectedBoard, ignoreCase = true)
+            val matchesClass = selectedClass == "All" || item.classLevel.equals(selectedClass, ignoreCase = true)
+            val matchesSubject = selectedSubject == "All" || item.subject.equals(selectedSubject, ignoreCase = true)
+            val matchesType = selectedType == null || item.resourceType == selectedType
+            val matchesLanguage = selectedLanguage == "All" || item.language.equals(selectedLanguage, ignoreCase = true)
+
+            matchesSearch && matchesBoard && matchesClass && matchesSubject && matchesType && matchesLanguage
+        }
+    }
+
+    LazyColumn(
+        modifier = Modifier
+            .fillMaxSize()
+            .padding(horizontal = 16.dp)
+            .testTag("library_screen"),
+        verticalArrangement = Arrangement.spacedBy(14.dp)
+    ) {
+        item {
+            Spacer(modifier = Modifier.height(8.dp))
+            Text(
+                text = "Educational Resource Library",
+                style = MaterialTheme.typography.headlineSmall.copy(fontWeight = FontWeight.Bold)
+            )
+            Text(
+                text = "Authorized GSEB & CBSE textbooks, blueprints, and revision material.",
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
+
+        // Search Bar
+        item {
+            OutlinedTextField(
+                value = searchQuery,
+                onValueChange = { searchQuery = it },
+                placeholder = { Text("Search by chapter, theorem, topic...") },
+                leadingIcon = { Icon(Icons.Default.Search, contentDescription = null) },
+                shape = RoundedCornerShape(14.dp),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .testTag("library_search_input"),
+                colors = OutlinedTextFieldDefaults.colors(
+                    focusedContainerColor = MaterialTheme.colorScheme.surface,
+                    unfocusedContainerColor = MaterialTheme.colorScheme.surface
+                ),
+                singleLine = true
+            )
+        }
+
+        // Filter: Boards
+        item {
+            Column {
+                Text(text = "Education Board", style = MaterialTheme.typography.labelLarge.copy(fontWeight = FontWeight.SemiBold))
+                Spacer(modifier = Modifier.height(6.dp))
+                LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    val boards = listOf("All", "GSEB", "CBSE")
+                    items(boards) { board ->
+                        FilterChip(
+                            selected = selectedBoard == board,
+                            onClick = { selectedBoard = board },
+                            label = { Text(board) }
+                        )
+                    }
+                }
+            }
+        }
+
+        // Filter: Classes
+        item {
+            Column {
+                Text(text = "Class / Grade", style = MaterialTheme.typography.labelLarge.copy(fontWeight = FontWeight.SemiBold))
+                Spacer(modifier = Modifier.height(6.dp))
+                LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    val classes = listOf("All", "Class 9", "Class 10", "Class 12 Science")
+                    items(classes) { cls ->
+                        FilterChip(
+                            selected = selectedClass == cls,
+                            onClick = { selectedClass = cls },
+                            label = { Text(cls) }
+                        )
+                    }
+                }
+            }
+        }
+
+        // Filter: Resource Type & Language
+        item {
+            LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                item {
+                    FilterChip(
+                        selected = selectedType == null,
+                        onClick = { selectedType = null },
+                        label = { Text("All Types") }
+                    )
+                }
+                items(ResourceType.values()) { type ->
+                    FilterChip(
+                        selected = selectedType == type,
+                        onClick = { selectedType = type },
+                        label = { Text(type.displayName) }
+                    )
+                }
+            }
+        }
+
+        // Count header
+        item {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    text = "Showing ${filteredResources.size} Resources",
                     style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.Bold)
                 )
-                Text(
-                    text = res.summary,
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                if (selectedBoard != "All" || selectedClass != "All" || selectedType != null) {
+                    Text(
+                        text = "Reset Filters",
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.clickable {
+                            selectedBoard = "All"
+                            selectedClass = "All"
+                            selectedSubject = "All"
+                            selectedType = null
+                            selectedLanguage = "All"
+                            searchQuery = ""
+                        }
+                    )
+                }
+            }
+        }
+
+        if (filteredResources.isEmpty()) {
+            item {
+                Card(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(vertical = 24.dp),
+                    shape = RoundedCornerShape(16.dp),
+                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f))
+                ) {
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(24.dp),
+                        horizontalAlignment = Alignment.CenterHorizontally
+                    ) {
+                        Text(
+                            text = "No study materials match your filters",
+                            style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold)
+                        )
+                        Spacer(modifier = Modifier.height(4.dp))
+                        Text(
+                            text = "Try switching the board, class, or clearing the search text.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                }
+            }
+        } else {
+            items(filteredResources) { resource ->
+                ResourceItemCard(
+                    resource = resource,
+                    onOpenReader = { activeReadingResource = resource }
                 )
+            }
+        }
 
-                Spacer(modifier = Modifier.height(16.dp))
+        item {
+            Spacer(modifier = Modifier.height(24.dp))
+        }
+    }
+}
 
-                Text(
-                    text = "Complete Study Material & Notes:",
-                    style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.Bold)
-                )
-                Spacer(modifier = Modifier.height(8.dp))
-
-                Surface(
-                    color = MaterialTheme.colorScheme.surface,
-                    shape = RoundedCornerShape(12.dp),
-                    tonalElevation = 1.dp,
-                    modifier = Modifier.fillMaxWidth()
+@Composable
+fun ResourceItemCard(
+    resource: EducationalResource,
+    onOpenReader: () -> Unit
+) {
+    Card(
+        shape = RoundedCornerShape(16.dp),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+        elevation = CardDefaults.cardElevation(defaultElevation = 2.dp),
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(onClick = onOpenReader)
+            .testTag("resource_card_${resource.id}")
+    ) {
+        Column(modifier = Modifier.padding(16.dp)) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                // Board and Class tag
+                Box(
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(6.dp))
+                        .background(MaterialTheme.colorScheme.primaryContainer)
+                        .padding(horizontal = 8.dp, vertical = 4.dp)
                 ) {
                     Text(
-                        text = res.fullContent,
-                        style = MaterialTheme.typography.bodyMedium,
-                        lineHeight = 22.sp,
-                        modifier = Modifier.padding(14.dp)
+                        text = "${resource.board} • ${resource.classLevel}",
+                        style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold),
+                        color = MaterialTheme.colorScheme.onPrimaryContainer
                     )
                 }
 
-                Spacer(modifier = Modifier.height(30.dp))
-            }
-        } else if (viewingChapter != null) {
-            val chapter = viewingChapter!!
-            Column(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .padding(padding)
-                    .padding(horizontal = 16.dp)
-                    .verticalScroll(rememberScrollState())
-            ) {
-                Spacer(modifier = Modifier.height(10.dp))
                 Text(
-                    text = "Chapter ${chapter.number} • ${chapter.subjectId.uppercase()} • ${chapter.readingTimeMinutes} mins read",
-                    style = MaterialTheme.typography.labelMedium,
+                    text = resource.resourceType.displayName,
+                    style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.primary,
-                    fontWeight = FontWeight.Bold
+                    fontWeight = FontWeight.SemiBold
                 )
-                Spacer(modifier = Modifier.height(8.dp))
+            }
+
+            Spacer(modifier = Modifier.height(8.dp))
+
+            Text(
+                text = resource.title,
+                style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold)
+            )
+
+            Text(
+                text = "${resource.subject} • ${resource.chapter}",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+
+            Spacer(modifier = Modifier.height(6.dp))
+
+            Text(
+                text = resource.description,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.85f),
+                maxLines = 2
+            )
+
+            Spacer(modifier = Modifier.height(12.dp))
+
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
                 Text(
-                    text = chapter.title,
-                    style = MaterialTheme.typography.headlineSmall.copy(fontWeight = FontWeight.Bold)
-                )
-                Spacer(modifier = Modifier.height(8.dp))
-                Text(
-                    text = chapter.summary,
-                    style = MaterialTheme.typography.bodyMedium,
+                    text = "Source: ${resource.publisher.take(24)}...",
+                    style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
-                Spacer(modifier = Modifier.height(14.dp))
-
-                // Formulas Card
-                Card(
-                    modifier = Modifier.fillMaxWidth(),
-                    shape = RoundedCornerShape(12.dp),
-                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.5f))
-                ) {
-                    Column(modifier = Modifier.padding(12.dp)) {
-                        Text(
-                            text = "📌 Key Formulas & Exam Points:",
-                            style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.Bold)
-                        )
-                        Spacer(modifier = Modifier.height(6.dp))
-                        chapter.keyFormulasOrNotes.forEach { note ->
-                            Text(text = "• $note", style = MaterialTheme.typography.bodySmall)
-                        }
-                    }
-                }
-
-                Spacer(modifier = Modifier.height(14.dp))
-                Text(
-                    text = chapter.content,
-                    style = MaterialTheme.typography.bodyMedium,
-                    lineHeight = 22.sp
-                )
-
-                Spacer(modifier = Modifier.height(20.dp))
 
                 Button(
-                    onClick = { onStartChapterQuiz(chapter) },
-                    modifier = Modifier.fillMaxWidth().height(48.dp),
-                    shape = RoundedCornerShape(12.dp)
+                    onClick = onOpenReader,
+                    shape = RoundedCornerShape(10.dp)
                 ) {
-                    Icon(Icons.Default.PlayArrow, contentDescription = null)
-                    Spacer(modifier = Modifier.width(8.dp))
-                    Text("Attempt Chapter Quiz (${chapter.sampleQuestions.size} Questions)")
-                }
-                Spacer(modifier = Modifier.height(24.dp))
-            }
-        } else {
-            // Main Library Browser
-            Column(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .padding(padding)
-                    .padding(horizontal = 16.dp)
-                    .testTag("library_screen")
-            ) {
-                Spacer(modifier = Modifier.height(12.dp))
-
-                // Header
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Column(modifier = Modifier.weight(1f)) {
-                        Text(
-                            text = "Educational Resource Library",
-                            style = MaterialTheme.typography.headlineSmall.copy(fontWeight = FontWeight.Bold)
-                        )
-                        Text(
-                            text = "Authorized GSEB & CBSE textbooks, notes, and past papers",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                    }
-
-                    IconButton(
-                        onClick = { showFilterPanel = !showFilterPanel },
-                        modifier = Modifier.testTag("filter_toggle_button")
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.FilterList,
-                            contentDescription = "Toggle Filters",
-                            tint = if (showFilterPanel) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                    }
-                }
-
-                Spacer(modifier = Modifier.height(12.dp))
-
-                // Search Bar
-                OutlinedTextField(
-                    value = searchQuery,
-                    onValueChange = { searchQuery = it },
-                    placeholder = { Text("Search by topic, board, or subject...") },
-                    leadingIcon = { Icon(Icons.Default.Search, contentDescription = null) },
-                    trailingIcon = {
-                        if (searchQuery.isNotEmpty()) {
-                            IconButton(onClick = { searchQuery = "" }) {
-                                Icon(Icons.Default.Clear, contentDescription = "Clear")
-                            }
-                        }
-                    },
-                    singleLine = true,
-                    shape = RoundedCornerShape(12.dp),
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .testTag("library_search_input")
-                )
-
-                // Expandable Filter Panel
-                AnimatedVisibility(visible = showFilterPanel) {
-                    Card(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(vertical = 10.dp),
-                        shape = RoundedCornerShape(12.dp),
-                        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f))
-                    ) {
-                        Column(modifier = Modifier.padding(12.dp)) {
-                            Text(
-                                text = "Education Board",
-                                style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold),
-                                color = MaterialTheme.colorScheme.primary
-                            )
-                            LazyRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                                items(listOf("All", "GSEB", "CBSE")) { b ->
-                                    FilterChip(
-                                        selected = selectedBoard == b,
-                                        onClick = { selectedBoard = b },
-                                        label = { Text(b, fontSize = 12.sp) }
-                                    )
-                                }
-                            }
-
-                            Spacer(modifier = Modifier.height(8.dp))
-
-                            Text(
-                                text = "Class & Stream",
-                                style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold),
-                                color = MaterialTheme.colorScheme.primary
-                            )
-                            LazyRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                                items(listOf("All", "Class 9", "Class 10", "Class 11 Science", "Class 12 Science")) { c ->
-                                    FilterChip(
-                                        selected = selectedClass == c,
-                                        onClick = { selectedClass = c },
-                                        label = { Text(c, fontSize = 12.sp) }
-                                    )
-                                }
-                            }
-
-                            Spacer(modifier = Modifier.height(8.dp))
-
-                            Text(
-                                text = "Resource Type",
-                                style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold),
-                                color = MaterialTheme.colorScheme.primary
-                            )
-                            LazyRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                                items(listOf("All", "E-Textbook", "Study Notes", "Previous Year Question Paper", "Workbook")) { t ->
-                                    FilterChip(
-                                        selected = selectedResourceType == t,
-                                        onClick = { selectedResourceType = t },
-                                        label = { Text(t, fontSize = 12.sp) }
-                                    )
-                                }
-                            }
-                        }
-                    }
-                }
-
-                Spacer(modifier = Modifier.height(10.dp))
-
-                // Quick Subject Filter Chips
-                LazyRow(
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                    modifier = Modifier.fillMaxWidth()
-                ) {
-                    item {
-                        FilterChip(
-                            selected = selectedSubject == "All",
-                            onClick = { selectedSubject = "All" },
-                            label = { Text("All Subjects") }
-                        )
-                    }
-                    items(listOf("Mathematics", "Science", "Physics", "Chemistry", "Social Science", "Gujarati")) { sub ->
-                        FilterChip(
-                            selected = selectedSubject == sub,
-                            onClick = { selectedSubject = sub },
-                            label = { Text(sub) }
-                        )
-                    }
-                }
-
-                Spacer(modifier = Modifier.height(12.dp))
-
-                Text(
-                    text = "Showing ${filteredResources.size} authorized materials",
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.outline
-                )
-
-                Spacer(modifier = Modifier.height(8.dp))
-
-                // Resource Cards List
-                LazyColumn(
-                    modifier = Modifier.fillMaxSize(),
-                    verticalArrangement = Arrangement.spacedBy(12.dp)
-                ) {
-                    items(filteredResources) { res ->
-                        val isBookmarked = bookmarks.any { it.referenceId == res.id }
-                        val isDownloaded = offlineMaterials.any { it.id == res.id }
-
-                        ElevatedCard(
-                            onClick = { viewingResource = res },
-                            shape = RoundedCornerShape(14.dp),
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .testTag("resource_card_${res.id}")
-                        ) {
-                            Column(modifier = Modifier.padding(14.dp)) {
-                                Row(
-                                    modifier = Modifier.fillMaxWidth(),
-                                    horizontalArrangement = Arrangement.SpaceBetween,
-                                    verticalAlignment = Alignment.CenterVertically
-                                ) {
-                                    Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                                        Surface(
-                                            color = if (res.board == "GSEB") MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.secondaryContainer,
-                                            shape = RoundedCornerShape(6.dp)
-                                        ) {
-                                            Text(
-                                                text = res.board,
-                                                style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold),
-                                                color = if (res.board == "GSEB") MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSecondaryContainer,
-                                                modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
-                                            )
-                                        }
-                                        Surface(
-                                            color = MaterialTheme.colorScheme.surfaceVariant,
-                                            shape = RoundedCornerShape(6.dp)
-                                        ) {
-                                            Text(
-                                                text = res.classLevel,
-                                                style = MaterialTheme.typography.labelSmall,
-                                                modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
-                                            )
-                                        }
-                                        Surface(
-                                            color = MaterialTheme.colorScheme.tertiaryContainer,
-                                            shape = RoundedCornerShape(6.dp)
-                                        ) {
-                                            Text(
-                                                text = res.resourceType,
-                                                style = MaterialTheme.typography.labelSmall,
-                                                color = MaterialTheme.colorScheme.onTertiaryContainer,
-                                                modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
-                                            )
-                                        }
-                                    }
-
-                                    Row {
-                                        if (isDownloaded) {
-                                            Icon(
-                                                Icons.Default.DownloadDone,
-                                                contentDescription = "Downloaded Offline",
-                                                tint = MaterialTheme.colorScheme.primary,
-                                                modifier = Modifier.size(18.dp)
-                                            )
-                                            Spacer(modifier = Modifier.width(6.dp))
-                                        }
-                                        if (isBookmarked) {
-                                            Icon(
-                                                Icons.Default.Bookmark,
-                                                contentDescription = "Bookmarked",
-                                                tint = MaterialTheme.colorScheme.primary,
-                                                modifier = Modifier.size(18.dp)
-                                            )
-                                        }
-                                    }
-                                }
-
-                                Spacer(modifier = Modifier.height(8.dp))
-
-                                Text(
-                                    text = res.title,
-                                    style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold)
-                                )
-
-                                Spacer(modifier = Modifier.height(4.dp))
-
-                                Text(
-                                    text = res.summary,
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                    maxLines = 2
-                                )
-
-                                Spacer(modifier = Modifier.height(10.dp))
-
-                                Row(
-                                    modifier = Modifier.fillMaxWidth(),
-                                    horizontalArrangement = Arrangement.SpaceBetween,
-                                    verticalAlignment = Alignment.CenterVertically
-                                ) {
-                                    Text(
-                                        text = "🏛 ${res.source.take(28)}...",
-                                        style = MaterialTheme.typography.labelSmall,
-                                        color = MaterialTheme.colorScheme.outline
-                                    )
-                                    Text(
-                                        text = "Open Reader →",
-                                        style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Bold),
-                                        color = MaterialTheme.colorScheme.primary
-                                    )
-                                }
-                            }
-                        }
-                    }
-
-                    item {
-                        Spacer(modifier = Modifier.height(30.dp))
-                    }
+                    Text("Read Study Guide")
                 }
             }
         }

@@ -20,7 +20,7 @@ abstract class EduSphereDatabase : RoomDatabase() {
                     context.applicationContext,
                     EduSphereDatabase::class.java,
                     "edusphere_database"
-                ).build()
+                ).fallbackToDestructiveMigration(dropAllTables = true).build()
                 INSTANCE = instance
                 instance
             }

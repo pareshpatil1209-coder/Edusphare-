@@ -1,6 +1,7 @@
 package com.example.feature.practice
 
 import android.content.Intent
+import android.speech.tts.TextToSpeech
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.animateFloatAsState
@@ -20,34 +21,25 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.AutoAwesome
-import androidx.compose.material.icons.filled.Bookmark
-import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Close
-import androidx.compose.material.icons.filled.CloudDownload
-import androidx.compose.material.icons.filled.HourglassTop
-import androidx.compose.material.icons.filled.Lightbulb
-import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.filled.Download
+import androidx.compose.material.icons.filled.FlipCameraAndroid
+import androidx.compose.material.icons.filled.HelpOutline
+import androidx.compose.material.icons.filled.PictureAsPdf
 import androidx.compose.material.icons.filled.Quiz
-import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Share
-import androidx.compose.material.icons.filled.Style
 import androidx.compose.material.icons.filled.Timer
 import androidx.compose.material.icons.filled.Visibility
 import androidx.compose.material.icons.filled.VisibilityOff
 import androidx.compose.material.icons.filled.VolumeUp
-import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
-import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
@@ -56,25 +48,20 @@ import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
-import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.PrimaryTabRow
 import androidx.compose.material3.Scaffold
-import androidx.compose.material3.SnackbarHost
-import androidx.compose.material3.SnackbarHostState
-import androidx.compose.material3.Surface
 import androidx.compose.material3.Tab
+import androidx.compose.material3.TabRow
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
-import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -91,917 +78,476 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.data.model.AuthorizedEducationalCatalog
-import com.example.data.model.EducationalSeedData
 import com.example.data.model.FlashcardDeck
 import com.example.data.model.FlashcardItem
 import com.example.data.model.GeneratedMockPaper
 import com.example.data.model.MockPaperConfig
-import com.example.data.model.QuestionItem
-import com.example.data.model.TestResultItem
+import com.example.data.model.QuizAttempt
+import com.example.data.model.QuizQuestion
 import com.example.data.repository.EduSphereRepository
 import com.example.feature.ai.AiStudyAssistantService
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import java.util.Locale
+import java.util.UUID
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun PracticeScreen(
     repository: EduSphereRepository,
-    initialQuizQuestions: List<QuestionItem>? = null,
-    initialQuizTitle: String? = null
+    aiService: AiStudyAssistantService
 ) {
     val context = LocalContext.current
-    val coroutineScope = rememberCoroutineScope()
-    val snackbarHostState = remember { SnackbarHostState() }
-    val aiService = remember { AiStudyAssistantService() }
+    val scope = rememberCoroutineScope()
+    var selectedTab by remember { mutableIntStateOf(0) }
 
-    var selectedTabIndex by remember { mutableIntStateOf(0) } // 0: AI Mock Papers, 1: Flashcards, 2: Quizzes, 3: Analytics
-
-    // Sub-states
-    var activeQuizTitle by remember { mutableStateOf(initialQuizTitle) }
-    var activeQuizQuestions by remember { mutableStateOf(initialQuizQuestions) }
-    var activeMockPaper by remember { mutableStateOf<GeneratedMockPaper?>(null) }
-    var activeFlashcardDeck by remember { mutableStateOf<FlashcardDeck?>(null) }
-
-    // Dialogs
-    var showMockGeneratorDialog by remember { mutableStateOf(false) }
-    var showAiFlashcardDialog by remember { mutableStateOf(false) }
-    var isGeneratingAiPaper by remember { mutableStateOf(false) }
-
-    val testResults by repository.observeTestResults().collectAsState(initial = emptyList())
-
-    // Back handlers
-    BackHandler(enabled = activeMockPaper != null || activeFlashcardDeck != null || (activeQuizQuestions != null && activeQuizQuestions!!.isNotEmpty())) {
-        if (activeQuizQuestions != null && activeQuizQuestions!!.isNotEmpty()) {
-            activeQuizQuestions = null
-            activeQuizTitle = null
-        } else if (activeMockPaper != null) {
-            activeMockPaper = null
-        } else if (activeFlashcardDeck != null) {
-            activeFlashcardDeck = null
+    // TTS
+    var tts: TextToSpeech? by remember { mutableStateOf(null) }
+    DisposableEffect(Unit) {
+        tts = TextToSpeech(context) { status ->
+            if (status == TextToSpeech.SUCCESS) {
+                tts?.language = Locale.ENGLISH
+            }
+        }
+        onDispose {
+            tts?.stop()
+            tts?.shutdown()
         }
     }
 
-    if (activeQuizQuestions != null && activeQuizQuestions!!.isNotEmpty()) {
-        ActiveQuizView(
-            title = activeQuizTitle ?: "Practice Quiz",
-            questions = activeQuizQuestions!!,
-            onQuizFinished = { score, totalMarks, accuracy, weakTopics ->
-                val item = TestResultItem(
-                    userId = "",
-                    testTitle = activeQuizTitle ?: "Practice Quiz",
-                    subject = "Curriculum Test",
-                    score = score,
-                    totalMarks = totalMarks,
-                    accuracy = accuracy,
-                    weakTopics = weakTopics
-                )
-                coroutineScope.launch {
-                    repository.recordTestResult(item)
-                    snackbarHostState.showSnackbar("Score saved to your profile analytics!")
+    // Active Mock Paper View state
+    var currentGeneratedPaper by remember { mutableStateOf<GeneratedMockPaper?>(null) }
+
+    if (currentGeneratedPaper != null) {
+        BackHandler { currentGeneratedPaper = null }
+        GeneratedMockPaperDetailView(
+            paper = currentGeneratedPaper!!,
+            onBack = { currentGeneratedPaper = null },
+            onSave = {
+                scope.launch {
+                    repository.saveMockPaper(currentGeneratedPaper!!)
                 }
-            },
-            onExitQuiz = {
-                activeQuizQuestions = null
-                activeQuizTitle = null
             }
         )
-    } else if (activeMockPaper != null) {
-        MockPaperDetailView(
-            paper = activeMockPaper!!,
-            onStartPracticeQuiz = { questions, title ->
-                activeQuizTitle = title
-                activeQuizQuestions = questions
-            },
-            onBack = { activeMockPaper = null }
-        )
-    } else if (activeFlashcardDeck != null) {
-        InteractiveFlashcardPlayer(
-            deck = activeFlashcardDeck!!,
-            onExit = { activeFlashcardDeck = null }
-        )
-    } else {
-        Scaffold(
-            snackbarHost = { SnackbarHost(snackbarHostState) },
-            modifier = Modifier.fillMaxSize()
-        ) { padding ->
-            Column(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .padding(padding)
-                    .testTag("practice_screen")
+        return
+    }
+
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .testTag("practice_screen")
+    ) {
+        TabRow(selectedTabIndex = selectedTab) {
+            Tab(
+                selected = selectedTab == 0,
+                onClick = { selectedTab = 0 },
+                text = { Text("AI Mock Papers") }
+            )
+            Tab(
+                selected = selectedTab == 1,
+                onClick = { selectedTab = 1 },
+                text = { Text("Flashcard Studio") }
+            )
+            Tab(
+                selected = selectedTab == 2,
+                onClick = { selectedTab = 2 },
+                text = { Text("Timed Quizzes") }
+            )
+        }
+
+        when (selectedTab) {
+            0 -> MockPaperGeneratorTab(
+                aiService = aiService,
+                onPaperGenerated = { currentGeneratedPaper = it }
+            )
+            1 -> FlashcardStudioTab(
+                aiService = aiService,
+                tts = tts
+            )
+            2 -> TimedQuizTab(
+                aiService = aiService,
+                repository = repository
+            )
+        }
+    }
+}
+
+@Composable
+fun MockPaperGeneratorTab(
+    aiService: AiStudyAssistantService,
+    onPaperGenerated: (GeneratedMockPaper) -> Unit
+) {
+    val scope = rememberCoroutineScope()
+
+    var board by remember { mutableStateOf("GSEB") }
+    var classLevel by remember { mutableStateOf("Class 10") }
+    var subject by remember { mutableStateOf("Mathematics") }
+    var language by remember { mutableStateOf("English") }
+    var totalMarks by remember { mutableIntStateOf(50) }
+    var durationMinutes by remember { mutableIntStateOf(90) }
+    var difficulty by remember { mutableStateOf("Standard") }
+    var includeMCQ by remember { mutableStateOf(true) }
+    var includeShortAnswer by remember { mutableStateOf(true) }
+    var includeLongAnswer by remember { mutableStateOf(true) }
+
+    var isGenerating by remember { mutableStateOf(false) }
+
+    LazyColumn(
+        modifier = Modifier
+            .fillMaxSize()
+            .padding(16.dp),
+        verticalArrangement = Arrangement.spacedBy(16.dp)
+    ) {
+        item {
+            Text(
+                text = "AI Mock Paper Generator",
+                style = MaterialTheme.typography.headlineSmall.copy(fontWeight = FontWeight.Bold)
+            )
+            Text(
+                text = "Generate syllabus-aligned exam practice papers with blueprint marking schemes.",
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
+
+        item {
+            Card(
+                shape = RoundedCornerShape(16.dp),
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f))
+            ) {
+                Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                    Text(text = "1. Exam Board", style = MaterialTheme.typography.labelLarge.copy(fontWeight = FontWeight.Bold))
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        listOf("GSEB", "CBSE").forEach { b ->
+                            FilterChip(
+                                selected = board == b,
+                                onClick = { board = b },
+                                label = { Text(b) }
+                            )
+                        }
+                    }
+
+                    Text(text = "2. Class Level", style = MaterialTheme.typography.labelLarge.copy(fontWeight = FontWeight.Bold))
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        listOf("Class 9", "Class 10", "Class 12 Science").forEach { c ->
+                            FilterChip(
+                                selected = classLevel == c,
+                                onClick = { classLevel = c },
+                                label = { Text(c) }
+                            )
+                        }
+                    }
+
+                    Text(text = "3. Subject", style = MaterialTheme.typography.labelLarge.copy(fontWeight = FontWeight.Bold))
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        listOf("Mathematics", "Science & Tech", "Physics").forEach { s ->
+                            FilterChip(
+                                selected = subject == s,
+                                onClick = { subject = s },
+                                label = { Text(s) }
+                            )
+                        }
+                    }
+
+                    Text(text = "4. Total Marks & Duration", style = MaterialTheme.typography.labelLarge.copy(fontWeight = FontWeight.Bold))
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        listOf(25 to 45, 50 to 90, 80 to 180).forEach { (m, d) ->
+                            FilterChip(
+                                selected = totalMarks == m,
+                                onClick = {
+                                    totalMarks = m
+                                    durationMinutes = d
+                                },
+                                label = { Text("$m Marks ($d min)") }
+                            )
+                        }
+                    }
+
+                    Text(text = "5. Question Types", style = MaterialTheme.typography.labelLarge.copy(fontWeight = FontWeight.Bold))
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        FilterChip(
+                            selected = includeMCQ,
+                            onClick = { includeMCQ = !includeMCQ },
+                            label = { Text("MCQs") }
+                        )
+                        FilterChip(
+                            selected = includeShortAnswer,
+                            onClick = { includeShortAnswer = !includeShortAnswer },
+                            label = { Text("Short Answer") }
+                        )
+                        FilterChip(
+                            selected = includeLongAnswer,
+                            onClick = { includeLongAnswer = !includeLongAnswer },
+                            label = { Text("Long / Proofs") }
+                        )
+                    }
+
+                    Spacer(modifier = Modifier.height(8.dp))
+
+                    Button(
+                        onClick = {
+                            isGenerating = true
+                            scope.launch {
+                                val config = MockPaperConfig(
+                                    board = board,
+                                    classLevel = classLevel,
+                                    subject = subject,
+                                    language = language,
+                                    totalMarks = totalMarks,
+                                    durationMinutes = durationMinutes,
+                                    difficulty = difficulty,
+                                    includeMCQ = includeMCQ,
+                                    includeShortAnswer = includeShortAnswer,
+                                    includeLongAnswer = includeLongAnswer
+                                )
+                                val paper = aiService.generateMockPaper(config)
+                                isGenerating = false
+                                onPaperGenerated(paper)
+                            }
+                        },
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(50.dp)
+                            .testTag("generate_mock_paper_button"),
+                        shape = RoundedCornerShape(12.dp),
+                        enabled = !isGenerating
+                    ) {
+                        if (isGenerating) {
+                            CircularProgressIndicator(modifier = Modifier.size(24.dp), color = MaterialTheme.colorScheme.onPrimary)
+                            Spacer(modifier = Modifier.width(10.dp))
+                            Text("Generating with Gemini AI...")
+                        } else {
+                            Icon(Icons.Default.AutoAwesome, contentDescription = null)
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Text("Generate Board Mock Paper")
+                        }
+                    }
+                }
+            }
+        }
+
+        item {
+            Card(
+                shape = RoundedCornerShape(16.dp),
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.5f)),
+                modifier = Modifier.fillMaxWidth()
             ) {
                 Column(modifier = Modifier.padding(16.dp)) {
                     Text(
-                        text = "Examination Preparation",
-                        style = MaterialTheme.typography.headlineSmall.copy(fontWeight = FontWeight.Bold)
-                    )
-                    Text(
-                        text = "AI Mock Papers, Flashcard Decks, and Timed Board Quizzes",
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                }
-
-                PrimaryTabRow(selectedTabIndex = selectedTabIndex) {
-                    Tab(
-                        selected = selectedTabIndex == 0,
-                        onClick = { selectedTabIndex = 0 },
-                        text = { Text("Mock Papers") },
-                        modifier = Modifier.testTag("tab_mock_papers")
-                    )
-                    Tab(
-                        selected = selectedTabIndex == 1,
-                        onClick = { selectedTabIndex = 1 },
-                        text = { Text("Flashcards") },
-                        modifier = Modifier.testTag("tab_flashcards")
-                    )
-                    Tab(
-                        selected = selectedTabIndex == 2,
-                        onClick = { selectedTabIndex = 2 },
-                        text = { Text("Quizzes") },
-                        modifier = Modifier.testTag("tab_quizzes")
-                    )
-                    Tab(
-                        selected = selectedTabIndex == 3,
-                        onClick = { selectedTabIndex = 3 },
-                        text = { Text("Analytics (${testResults.size})") },
-                        modifier = Modifier.testTag("tab_analytics")
-                    )
-                }
-
-                when (selectedTabIndex) {
-                    0 -> MockPapersTab(
-                        onGenerateClick = { showMockGeneratorDialog = true },
-                        onSelectPaper = { activeMockPaper = it }
-                    )
-                    1 -> FlashcardsTab(
-                        onOpenDeck = { activeFlashcardDeck = it },
-                        onCreateAiDeck = { showAiFlashcardDialog = true }
-                    )
-                    2 -> QuizzesTab(
-                        onStartQuiz = { title, questions ->
-                            activeQuizTitle = title
-                            activeQuizQuestions = questions
-                        }
-                    )
-                    3 -> AnalyticsTab(testResults = testResults)
-                }
-            }
-        }
-    }
-
-    // AI Mock Paper Generator Dialog
-    if (showMockGeneratorDialog) {
-        MockPaperGeneratorModal(
-            isLoading = isGeneratingAiPaper,
-            onDismiss = { showMockGeneratorDialog = false },
-            onGenerate = { config ->
-                isGeneratingAiPaper = true
-                coroutineScope.launch {
-                    val paper = aiService.generateMockPaper(config)
-                    isGeneratingAiPaper = false
-                    showMockGeneratorDialog = false
-                    activeMockPaper = paper
-                }
-            }
-        )
-    }
-
-    // AI Flashcard Generator Dialog
-    if (showAiFlashcardDialog) {
-        var topicInput by remember { mutableStateOf("") }
-        var isGeneratingCards by remember { mutableStateOf(false) }
-
-        AlertDialog(
-            onDismissRequest = { if (!isGeneratingCards) showAiFlashcardDialog = false },
-            title = {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Icon(Icons.Default.AutoAwesome, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
-                    Spacer(modifier = Modifier.width(8.dp))
-                    Text("AI Flashcard Creator")
-                }
-            },
-            text = {
-                Column {
-                    Text(
-                        text = "Enter any topic or paste study notes. Gemini AI will create a dedicated 5-card revision study set.",
-                        style = MaterialTheme.typography.bodyMedium
-                    )
-                    Spacer(modifier = Modifier.height(12.dp))
-                    OutlinedTextField(
-                        value = topicInput,
-                        onValueChange = { topicInput = it },
-                        label = { Text("Topic or Study Notes") },
-                        placeholder = { Text("e.g. Newton's 3 Laws of Motion or Chemical Bonding") },
-                        modifier = Modifier.fillMaxWidth(),
-                        maxLines = 4
-                    )
-                    if (isGeneratingCards) {
-                        Spacer(modifier = Modifier.height(16.dp))
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            CircularProgressIndicator(modifier = Modifier.size(20.dp))
-                            Spacer(modifier = Modifier.width(10.dp))
-                            Text("Generating smart study cards...", style = MaterialTheme.typography.bodySmall)
-                        }
-                    }
-                }
-            },
-            confirmButton = {
-                Button(
-                    onClick = {
-                        if (topicInput.isNotBlank()) {
-                            isGeneratingCards = true
-                            coroutineScope.launch {
-                                val cards = aiService.generateFlashcards(topicInput)
-                                isGeneratingCards = false
-                                showAiFlashcardDialog = false
-                                activeFlashcardDeck = FlashcardDeck(
-                                    id = "ai_deck_${System.currentTimeMillis()}",
-                                    title = "AI Deck: ${topicInput.take(24)}...",
-                                    board = "Custom",
-                                    classLevel = "General",
-                                    subject = "Revision",
-                                    description = "AI-generated revision study set for $topicInput",
-                                    cards = cards
-                                )
-                            }
-                        }
-                    },
-                    enabled = topicInput.isNotBlank() && !isGeneratingCards
-                ) {
-                    Text("Generate")
-                }
-            },
-            dismissButton = {
-                TextButton(
-                    onClick = { showAiFlashcardDialog = false },
-                    enabled = !isGeneratingCards
-                ) {
-                    Text("Cancel")
-                }
-            }
-        )
-    }
-}
-
-// ----------------- SUB-TABS -----------------
-
-@Composable
-fun MockPapersTab(
-    onGenerateClick: () -> Unit,
-    onSelectPaper: (GeneratedMockPaper) -> Unit
-) {
-    // Pre-configured official papers remembered at composable scope
-    val standardGsebMath = remember {
-        AuthorizedEducationalCatalog.generateStandardMockPaper(
-            MockPaperConfig(board = "GSEB", classLevel = "Class 10", subject = "Mathematics", totalMarks = 80)
-        )
-    }
-    val standardGsebScience = remember {
-        AuthorizedEducationalCatalog.generateStandardMockPaper(
-            MockPaperConfig(board = "GSEB", classLevel = "Class 10", subject = "Science", totalMarks = 80)
-        )
-    }
-    val standardCbseMath = remember {
-        AuthorizedEducationalCatalog.generateStandardMockPaper(
-            MockPaperConfig(board = "CBSE", classLevel = "Class 10", subject = "Mathematics", totalMarks = 80)
-        )
-    }
-    val standardPapers = remember { listOf(standardGsebMath, standardGsebScience, standardCbseMath) }
-
-    LazyColumn(
-        modifier = Modifier
-            .fillMaxSize()
-            .padding(16.dp),
-        verticalArrangement = Arrangement.spacedBy(14.dp)
-    ) {
-        // AI Generator Hero Card
-        item {
-            ElevatedCard(
-                onClick = onGenerateClick,
-                shape = RoundedCornerShape(16.dp),
-                colors = CardDefaults.elevatedCardColors(containerColor = MaterialTheme.colorScheme.primaryContainer),
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .testTag("ai_mock_paper_generator_button")
-            ) {
-                Row(
-                    modifier = Modifier.padding(16.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Box(
-                        modifier = Modifier
-                            .size(52.dp)
-                            .clip(CircleShape)
-                            .background(MaterialTheme.colorScheme.primary),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Icon(Icons.Default.AutoAwesome, contentDescription = null, tint = MaterialTheme.colorScheme.onPrimary)
-                    }
-                    Spacer(modifier = Modifier.width(16.dp))
-                    Column(modifier = Modifier.weight(1f)) {
-                        Text(
-                            text = "AI Mock Exam Generator 🚀",
-                            style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold)
-                        )
-                        Text(
-                            text = "Generate custom GSEB/CBSE pattern papers with verified marks & marking schemes",
-                            style = MaterialTheme.typography.bodySmall
-                        )
-                    }
-                }
-            }
-        }
-
-        item {
-            Text(
-                text = "Official Board Blueprints & Mock Papers",
-                style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold)
-            )
-        }
-
-        items(standardPapers) { paper ->
-            Card(
-                onClick = { onSelectPaper(paper) },
-                shape = RoundedCornerShape(14.dp),
-                modifier = Modifier.fillMaxWidth()
-            ) {
-                Column(modifier = Modifier.padding(14.dp)) {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                            Surface(
-                                color = MaterialTheme.colorScheme.primaryContainer,
-                                shape = RoundedCornerShape(6.dp)
-                            ) {
-                                Text(
-                                    text = paper.board,
-                                    style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold),
-                                    modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
-                                )
-                            }
-                            Surface(
-                                color = MaterialTheme.colorScheme.surfaceVariant,
-                                shape = RoundedCornerShape(6.dp)
-                            ) {
-                                Text(
-                                    text = paper.classLevel,
-                                    style = MaterialTheme.typography.labelSmall,
-                                    modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
-                                )
-                            }
-                        }
-
-                        Text(
-                            text = "${paper.totalMarks} Marks • ${paper.durationMinutes} Mins",
-                            style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.primary,
-                            fontWeight = FontWeight.SemiBold
-                        )
-                    }
-
-                    Spacer(modifier = Modifier.height(8.dp))
-
-                    Text(
-                        text = paper.title,
-                        style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold)
-                    )
-
-                    Spacer(modifier = Modifier.height(4.dp))
-
-                    Text(
-                        text = "${paper.sections.size} Sections: ${paper.sections.joinToString(" • ") { "${it.name} (${it.totalSectionMarks}M)" }}",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-
-                    Spacer(modifier = Modifier.height(10.dp))
-
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Text(
-                            text = "✅ Marking Scheme Included",
-                            style = MaterialTheme.typography.labelSmall,
-                            color = Color(0xFF10B981)
-                        )
-                        Text(
-                            text = "View Paper →",
-                            style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Bold),
-                            color = MaterialTheme.colorScheme.primary
-                        )
-                    }
-                }
-            }
-        }
-    }
-}
-
-@Composable
-fun FlashcardsTab(
-    onOpenDeck: (FlashcardDeck) -> Unit,
-    onCreateAiDeck: () -> Unit
-) {
-    LazyColumn(
-        modifier = Modifier
-            .fillMaxSize()
-            .padding(16.dp),
-        verticalArrangement = Arrangement.spacedBy(14.dp)
-    ) {
-        item {
-            ElevatedCard(
-                onClick = onCreateAiDeck,
-                shape = RoundedCornerShape(16.dp),
-                colors = CardDefaults.elevatedCardColors(containerColor = MaterialTheme.colorScheme.secondaryContainer),
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .testTag("ai_flashcard_generator_button")
-            ) {
-                Row(
-                    modifier = Modifier.padding(16.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Box(
-                        modifier = Modifier
-                            .size(50.dp)
-                            .clip(CircleShape)
-                            .background(MaterialTheme.colorScheme.secondary),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Icon(Icons.Default.Style, contentDescription = null, tint = MaterialTheme.colorScheme.onSecondary)
-                    }
-                    Spacer(modifier = Modifier.width(16.dp))
-                    Column(modifier = Modifier.weight(1f)) {
-                        Text(
-                            text = "Create Flashcards with AI 🎴",
-                            style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold)
-                        )
-                        Text(
-                            text = "Instant 3D flip study sets from any topic, formula, or custom notes",
-                            style = MaterialTheme.typography.bodySmall
-                        )
-                    }
-                }
-            }
-        }
-
-        item {
-            Text(
-                text = "Curated Board Syllabus Decks",
-                style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold)
-            )
-        }
-
-        items(AuthorizedEducationalCatalog.flashcardDecks) { deck ->
-            Card(
-                onClick = { onOpenDeck(deck) },
-                shape = RoundedCornerShape(14.dp),
-                modifier = Modifier.fillMaxWidth()
-            ) {
-                Column(modifier = Modifier.padding(14.dp)) {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Surface(
-                            color = MaterialTheme.colorScheme.primaryContainer,
-                            shape = RoundedCornerShape(6.dp)
-                        ) {
-                            Text(
-                                text = "${deck.board} • ${deck.classLevel}",
-                                style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold),
-                                modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
-                            )
-                        }
-
-                        Text(
-                            text = "${deck.cards.size} Cards",
-                            style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Bold),
-                            color = MaterialTheme.colorScheme.primary
-                        )
-                    }
-
-                    Spacer(modifier = Modifier.height(8.dp))
-
-                    Text(
-                        text = deck.title,
-                        style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold)
-                    )
-
-                    Spacer(modifier = Modifier.height(4.dp))
-
-                    Text(
-                        text = deck.description,
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-
-                    Spacer(modifier = Modifier.height(10.dp))
-
-                    Text(
-                        text = "Practice Deck →",
+                        text = "ℹ️ AI Practice Notice",
                         style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Bold),
                         color = MaterialTheme.colorScheme.primary
                     )
+                    Spacer(modifier = Modifier.height(4.dp))
+                    Text(
+                        text = "All mock papers are synthetically generated using verified board syllabus weightage. The answer keys remain hidden until you choose to reveal them.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onPrimaryContainer
+                    )
                 }
             }
         }
     }
 }
-
-@Composable
-fun QuizzesTab(
-    onStartQuiz: (title: String, questions: List<QuestionItem>) -> Unit
-) {
-    LazyColumn(
-        modifier = Modifier
-            .fillMaxSize()
-            .padding(16.dp),
-        verticalArrangement = Arrangement.spacedBy(14.dp)
-    ) {
-        item {
-            ElevatedCard(
-                onClick = {
-                    val allQuestions = EducationalSeedData.chapters.flatMap { it.sampleQuestions }
-                    onStartQuiz("All-India Full Syllabus Simulation", allQuestions)
-                },
-                shape = RoundedCornerShape(16.dp),
-                colors = CardDefaults.elevatedCardColors(containerColor = MaterialTheme.colorScheme.tertiaryContainer),
-                modifier = Modifier.fillMaxWidth()
-            ) {
-                Row(
-                    modifier = Modifier.padding(16.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Box(
-                        modifier = Modifier
-                            .size(50.dp)
-                            .clip(CircleShape)
-                            .background(MaterialTheme.colorScheme.tertiary),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Icon(Icons.Default.Timer, contentDescription = null, tint = MaterialTheme.colorScheme.onTertiary)
-                    }
-                    Spacer(modifier = Modifier.width(16.dp))
-                    Column(modifier = Modifier.weight(1f)) {
-                        Text(
-                            text = "Full Syllabus Mock Examination",
-                            style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold)
-                        )
-                        Text(
-                            text = "Timed simulation with live countdown, instant scoring & weak-topics analysis",
-                            style = MaterialTheme.typography.bodySmall
-                        )
-                    }
-                }
-            }
-        }
-
-        item {
-            Text(
-                text = "Chapter-wise Tests",
-                style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold)
-            )
-        }
-
-        items(EducationalSeedData.chapters) { chapter ->
-            Card(
-                shape = RoundedCornerShape(14.dp),
-                modifier = Modifier.fillMaxWidth()
-            ) {
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(14.dp),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Column(modifier = Modifier.weight(1f)) {
-                        Text(
-                            text = "${chapter.subjectId.uppercase()} • Chapter ${chapter.number}",
-                            style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.primary
-                        )
-                        Text(
-                            text = chapter.title,
-                            style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.SemiBold)
-                        )
-                        Text(
-                            text = "${chapter.sampleQuestions.size} Questions • 10 Mins",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                    }
-
-                    Button(
-                        onClick = { onStartQuiz("${chapter.title} Quiz", chapter.sampleQuestions) },
-                        shape = RoundedCornerShape(10.dp)
-                    ) {
-                        Text("Start")
-                    }
-                }
-            }
-        }
-    }
-}
-
-@Composable
-fun AnalyticsTab(testResults: List<TestResultItem>) {
-    if (testResults.isEmpty()) {
-        Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-            Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.padding(24.dp)) {
-                Icon(Icons.Default.Quiz, contentDescription = null, modifier = Modifier.size(54.dp), tint = MaterialTheme.colorScheme.primary)
-                Spacer(modifier = Modifier.height(12.dp))
-                Text(
-                    text = "No tests recorded yet",
-                    style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold)
-                )
-                Text(
-                    text = "Take a chapter quiz or mock examination above to see your scores, accuracy, and weak topic analytics!",
-                    textAlign = TextAlign.Center,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    style = MaterialTheme.typography.bodyMedium
-                )
-            }
-        }
-    } else {
-        LazyColumn(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(16.dp),
-            verticalArrangement = Arrangement.spacedBy(12.dp)
-        ) {
-            items(testResults) { res ->
-                Card(
-                    shape = RoundedCornerShape(14.dp),
-                    modifier = Modifier.fillMaxWidth()
-                ) {
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(14.dp),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Column(modifier = Modifier.weight(1f)) {
-                            Text(
-                                text = res.testTitle,
-                                style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.Bold)
-                            )
-                            Text(
-                                text = "Accuracy: ${res.accuracy}% • ${res.subject}",
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                            if (res.weakTopics.isNotEmpty()) {
-                                Text(
-                                    text = "Needs Review: ${res.weakTopics.joinToString(", ")}",
-                                    style = MaterialTheme.typography.labelSmall,
-                                    color = MaterialTheme.colorScheme.error
-                                )
-                            }
-                        }
-
-                        Box(
-                            modifier = Modifier
-                                .size(54.dp)
-                                .clip(CircleShape)
-                                .background(
-                                    if (res.accuracy >= 75) Color(0xFF10B981).copy(alpha = 0.15f)
-                                    else MaterialTheme.colorScheme.primary.copy(alpha = 0.15f)
-                                ),
-                            contentAlignment = Alignment.Center
-                        ) {
-                            Text(
-                                text = "${res.score}/${res.totalMarks}",
-                                style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.Bold),
-                                color = if (res.accuracy >= 75) Color(0xFF10B981) else MaterialTheme.colorScheme.primary
-                            )
-                        }
-                    }
-                }
-            }
-        }
-    }
-}
-
-// ----------------- MODALS & DETAIL VIEWS -----------------
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun MockPaperDetailView(
+fun GeneratedMockPaperDetailView(
     paper: GeneratedMockPaper,
-    onStartPracticeQuiz: (List<QuestionItem>, String) -> Unit,
-    onBack: () -> Unit
+    onBack: () -> Unit,
+    onSave: () -> Unit
 ) {
     val context = LocalContext.current
     var showMarkingScheme by remember { mutableStateOf(false) }
+    var isExamTimerRunning by remember { mutableStateOf(false) }
+    var remainingSeconds by remember { mutableIntStateOf(paper.durationMinutes * 60) }
+    var isSaved by remember { mutableStateOf(false) }
+
+    LaunchedEffect(isExamTimerRunning) {
+        while (isExamTimerRunning && remainingSeconds > 0) {
+            delay(1000)
+            remainingSeconds--
+        }
+    }
 
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text(paper.title, maxLines = 1) },
+                title = { Text(paper.title, maxLines = 1, style = MaterialTheme.typography.titleMedium) },
                 navigationIcon = {
                     IconButton(onClick = onBack) {
                         Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
                     }
                 },
                 actions = {
-                    // Export/Share Paper
                     IconButton(onClick = {
-                        val shareText = StringBuilder().apply {
-                            appendLine("📚 ${paper.title}")
-                            appendLine("Board: ${paper.board} | ${paper.classLevel} | ${paper.subject}")
-                            appendLine("Total Marks: ${paper.totalMarks} | Duration: ${paper.durationMinutes} Mins")
-                            appendLine("\n${paper.disclaimer}\n")
-                            appendLine("GENERAL INSTRUCTIONS:")
-                            paper.generalInstructions.forEach { appendLine("• $it") }
-                            paper.sections.forEach { sec ->
-                                appendLine("\n--- ${sec.name}: ${sec.title} (${sec.totalSectionMarks} Marks) ---")
-                                sec.questions.forEach { q ->
-                                    appendLine("Q${q.number}. ${q.question} [${q.marks}M]")
-                                    q.options?.forEachIndexed { i, opt -> appendLine("   (${('A' + i)}) $opt") }
-                                    if (showMarkingScheme) {
-                                        appendLine("   Answer: ${q.answerKeyOrSolution}")
-                                    }
-                                }
-                            }
-                        }.toString()
-
-                        val sendIntent = Intent(Intent.ACTION_SEND).apply {
-                            putExtra(Intent.EXTRA_TEXT, shareText)
+                        val shareIntent = Intent(Intent.ACTION_SEND).apply {
                             type = "text/plain"
+                            putExtra(Intent.EXTRA_SUBJECT, paper.title)
+                            putExtra(Intent.EXTRA_TEXT, "${paper.title}\nTotal Marks: ${paper.totalMarks}\nDuration: ${paper.durationMinutes} min\n\nGenerated via EduSphere AI Practice Platform.")
                         }
-                        context.startActivity(Intent.createChooser(sendIntent, "Export Mock Exam Paper"))
+                        context.startActivity(Intent.createChooser(shareIntent, "Export Mock Paper"))
                     }) {
                         Icon(Icons.Default.Share, contentDescription = "Export Paper")
+                    }
+
+                    IconButton(onClick = {
+                        onSave()
+                        isSaved = true
+                    }) {
+                        Icon(
+                            if (isSaved) Icons.Default.CheckCircle else Icons.Default.Download,
+                            contentDescription = "Save Paper",
+                            tint = if (isSaved) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface
+                        )
                     }
                 }
             )
         }
     ) { padding ->
-        Column(
+        LazyColumn(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(padding)
-                .padding(horizontal = 16.dp)
-                .verticalScroll(rememberScrollState())
+                .padding(horizontal = 16.dp),
+            verticalArrangement = Arrangement.spacedBy(16.dp)
         ) {
-            Spacer(modifier = Modifier.height(10.dp))
-
-            // AI Practice Material Disclaimer Banner
-            Surface(
-                color = MaterialTheme.colorScheme.tertiaryContainer,
-                shape = RoundedCornerShape(12.dp),
-                modifier = Modifier.fillMaxWidth()
-            ) {
-                Row(modifier = Modifier.padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
-                    Icon(Icons.Default.AutoAwesome, contentDescription = null, tint = MaterialTheme.colorScheme.onTertiaryContainer)
-                    Spacer(modifier = Modifier.width(10.dp))
-                    Text(
-                        text = paper.disclaimer,
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onTertiaryContainer
-                    )
-                }
-            }
-
-            Spacer(modifier = Modifier.height(14.dp))
-
-            // Header Meta Card
-            Card(
-                modifier = Modifier.fillMaxWidth(),
-                shape = RoundedCornerShape(12.dp),
-                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f))
-            ) {
-                Column(modifier = Modifier.padding(14.dp)) {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween
-                    ) {
-                        Text(text = "Total Marks: ${paper.totalMarks}", fontWeight = FontWeight.Bold)
-                        Text(text = "Duration: ${paper.durationMinutes} Minutes", fontWeight = FontWeight.Bold)
-                    }
-                    Spacer(modifier = Modifier.height(6.dp))
-                    Text(text = "Board & Class: ${paper.board} • ${paper.classLevel}", style = MaterialTheme.typography.bodySmall)
-                    Spacer(modifier = Modifier.height(10.dp))
-                    Text(text = "General Instructions:", fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.labelMedium)
-                    paper.generalInstructions.forEach {
-                        Text(text = "• $it", style = MaterialTheme.typography.bodySmall)
-                    }
-                }
-            }
-
-            Spacer(modifier = Modifier.height(14.dp))
-
-            // Toggle Marking Scheme
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Text(
-                    text = "Question Paper Sections",
-                    style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold)
-                )
-
-                OutlinedButton(
-                    onClick = { showMarkingScheme = !showMarkingScheme },
-                    shape = RoundedCornerShape(8.dp)
+            // Exam Header Banner
+            item {
+                Card(
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(16.dp),
+                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
                 ) {
-                    Icon(
-                        imageVector = if (showMarkingScheme) Icons.Default.VisibilityOff else Icons.Default.Visibility,
-                        contentDescription = null,
-                        modifier = Modifier.size(16.dp)
-                    )
-                    Spacer(modifier = Modifier.width(6.dp))
-                    Text(if (showMarkingScheme) "Hide Answers" else "Show Solution Key", fontSize = 12.sp)
-                }
-            }
-
-            Spacer(modifier = Modifier.height(8.dp))
-
-            // Sections
-            paper.sections.forEach { section ->
-                Surface(
-                    color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.3f),
-                    shape = RoundedCornerShape(8.dp),
-                    modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp)
-                ) {
-                    Row(
-                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
-                        horizontalArrangement = Arrangement.SpaceBetween
-                    ) {
+                    Column(modifier = Modifier.padding(16.dp)) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween
+                        ) {
+                            Text(
+                                text = "${paper.board} • ${paper.classLevel}",
+                                style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Bold),
+                                color = MaterialTheme.colorScheme.primary
+                            )
+                            Text(
+                                text = "Max Marks: ${paper.totalMarks}",
+                                style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Bold)
+                            )
+                        }
+                        Spacer(modifier = Modifier.height(4.dp))
                         Text(
-                            text = "${section.name}: ${section.title}",
-                            style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Bold),
-                            color = MaterialTheme.colorScheme.primary
+                            text = paper.subject,
+                            style = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.Bold)
                         )
                         Text(
-                            text = "${section.totalSectionMarks} Marks",
+                            text = "Time Allowed: ${paper.durationMinutes} Minutes",
+                            style = MaterialTheme.typography.bodySmall
+                        )
+
+                        Spacer(modifier = Modifier.height(12.dp))
+
+                        // Timer Controller
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            val mins = remainingSeconds / 60
+                            val secs = remainingSeconds % 60
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Icon(Icons.Default.Timer, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
+                                Spacer(modifier = Modifier.width(6.dp))
+                                Text(
+                                    text = String.format(Locale.getDefault(), "%02d:%02d", mins, secs),
+                                    style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold)
+                                )
+                            }
+
+                            Button(
+                                onClick = { isExamTimerRunning = !isExamTimerRunning },
+                                shape = RoundedCornerShape(8.dp)
+                            ) {
+                                Text(if (isExamTimerRunning) "Pause Exam" else "Start Timed Exam")
+                            }
+                        }
+                    }
+                }
+            }
+
+            // General Instructions
+            item {
+                Card(
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(12.dp),
+                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
+                ) {
+                    Column(modifier = Modifier.padding(14.dp)) {
+                        Text(
+                            text = "General Instructions:",
                             style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Bold)
                         )
+                        paper.generalInstructions.forEach { inst ->
+                            Text(
+                                text = "• $inst",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
                     }
                 }
+            }
 
-                section.questions.forEach { q ->
+            // Questions Sections
+            paper.sections.forEach { section ->
+                item {
+                    Text(
+                        text = "${section.sectionName} — ${section.totalMarks} Marks",
+                        style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
+                        color = MaterialTheme.colorScheme.primary
+                    )
+                    Text(
+                        text = section.instructions,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+
+                items(section.questions) { q ->
                     Card(
-                        modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
-                        shape = RoundedCornerShape(10.dp)
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = RoundedCornerShape(12.dp),
+                        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
                     ) {
-                        Column(modifier = Modifier.padding(12.dp)) {
+                        Column(modifier = Modifier.padding(14.dp)) {
                             Row(
                                 modifier = Modifier.fillMaxWidth(),
                                 horizontalArrangement = Arrangement.SpaceBetween
                             ) {
                                 Text(
-                                    text = "Q${q.number}",
-                                    fontWeight = FontWeight.Bold,
-                                    color = MaterialTheme.colorScheme.primary
+                                    text = "Q${q.questionNumber}.",
+                                    style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.Bold)
                                 )
                                 Text(
                                     text = "[${q.marks} Mark${if (q.marks > 1) "s" else ""}]",
-                                    style = MaterialTheme.typography.labelSmall,
-                                    fontWeight = FontWeight.SemiBold
+                                    style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold),
+                                    color = MaterialTheme.colorScheme.secondary
                                 )
                             }
                             Spacer(modifier = Modifier.height(4.dp))
-                            Text(text = q.question, style = MaterialTheme.typography.bodyMedium)
+                            Text(
+                                text = q.prompt,
+                                style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Medium)
+                            )
 
-                            q.options?.forEachIndexed { i, opt ->
-                                Text(
-                                    text = "(${('A' + i)}) $opt",
-                                    style = MaterialTheme.typography.bodySmall,
-                                    modifier = Modifier.padding(start = 12.dp, top = 2.dp)
-                                )
-                            }
-
-                            // Marking Scheme & Answer
-                            AnimatedVisibility(visible = showMarkingScheme) {
-                                Column(
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .padding(top = 8.dp)
-                                        .background(Color(0xFF10B981).copy(alpha = 0.1f), RoundedCornerShape(8.dp))
-                                        .padding(8.dp)
-                                ) {
+                            if (!q.options.isNullOrEmpty()) {
+                                Spacer(modifier = Modifier.height(8.dp))
+                                q.options.forEachIndexed { idx, opt ->
+                                    val optLetter = ('A' + idx)
                                     Text(
-                                        text = "✓ Solution: ${q.answerKeyOrSolution}",
-                                        style = MaterialTheme.typography.bodySmall.copy(fontWeight = FontWeight.SemiBold),
-                                        color = Color(0xFF047857)
-                                    )
-                                    Spacer(modifier = Modifier.height(2.dp))
-                                    Text(
-                                        text = "Marking Scheme: ${q.markingSchemeStep}",
-                                        style = MaterialTheme.typography.labelSmall,
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                        text = "($optLetter) $opt",
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        modifier = Modifier.padding(vertical = 2.dp)
                                     )
                                 }
                             }
@@ -1010,708 +556,514 @@ fun MockPaperDetailView(
                 }
             }
 
-            Spacer(modifier = Modifier.height(20.dp))
-
-            // Convert MCQs to Interactive Quiz
-            val objectiveQuestions = paper.sections.flatMap { it.questions }
-                .filter { it.options != null && it.options.isNotEmpty() }
-                .mapIndexed { idx, mq ->
-                    QuestionItem(
-                        id = "obj_${idx}_${mq.number}",
-                        questionText = mq.question,
-                        options = mq.options!!,
-                        correctIndex = 0, // Option A default in generator
-                        explanation = mq.answerKeyOrSolution
-                    )
-                }
-
-            if (objectiveQuestions.isNotEmpty()) {
-                Button(
-                    onClick = { onStartPracticeQuiz(objectiveQuestions, "${paper.subject} Live Practice") },
-                    modifier = Modifier.fillMaxWidth().height(48.dp),
-                    shape = RoundedCornerShape(12.dp)
+            // Marking Scheme Toggle & View
+            item {
+                Spacer(modifier = Modifier.height(8.dp))
+                OutlinedButton(
+                    onClick = { showMarkingScheme = !showMarkingScheme },
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(10.dp)
                 ) {
-                    Icon(Icons.Default.PlayArrow, contentDescription = null)
+                    Icon(
+                        if (showMarkingScheme) Icons.Default.VisibilityOff else Icons.Default.Visibility,
+                        contentDescription = null
+                    )
                     Spacer(modifier = Modifier.width(8.dp))
-                    Text("Attempt Section A in Live Timed Quiz (${objectiveQuestions.size} Questions)")
+                    Text(if (showMarkingScheme) "Hide Marking Scheme & Answer Key" else "Reveal Marking Scheme & Answer Key")
                 }
             }
 
-            Spacer(modifier = Modifier.height(30.dp))
+            if (showMarkingScheme) {
+                item {
+                    Text(
+                        text = "Official Marking Scheme & Step Solutions",
+                        style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
+                        color = MaterialTheme.colorScheme.secondary
+                    )
+                }
+
+                items(paper.markingScheme) { answer ->
+                    Card(
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = RoundedCornerShape(12.dp),
+                        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.4f))
+                    ) {
+                        Column(modifier = Modifier.padding(14.dp)) {
+                            Text(
+                                text = "Answer to Q${answer.questionNumber}:",
+                                style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Bold),
+                                color = MaterialTheme.colorScheme.secondary
+                            )
+                            Spacer(modifier = Modifier.height(4.dp))
+                            Text(
+                                text = answer.expectedAnswer,
+                                style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.SemiBold)
+                            )
+                            Spacer(modifier = Modifier.height(4.dp))
+                            Text(
+                                text = "Step Breakdown: ${answer.stepByStepMarking}",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSecondaryContainer
+                            )
+                        }
+                    }
+                }
+            }
+
+            item {
+                Spacer(modifier = Modifier.height(32.dp))
+            }
         }
     }
 }
 
 @Composable
-fun InteractiveFlashcardPlayer(
-    deck: FlashcardDeck,
-    onExit: () -> Unit
+fun FlashcardStudioTab(
+    aiService: AiStudyAssistantService,
+    tts: TextToSpeech?
 ) {
-    var currentIndex by remember { mutableIntStateOf(0) }
+    val scope = rememberCoroutineScope()
+    var currentCards by remember { mutableStateOf(AuthorizedEducationalCatalog.sampleFlashcardDecks[0].cards) }
+    var currentCardIndex by remember { mutableIntStateOf(0) }
     var isFlipped by remember { mutableStateOf(false) }
     var showHint by remember { mutableStateOf(false) }
-    val masteredIds = remember { mutableStateListOf<String>() }
-    var isCompleted by remember { mutableStateOf(false) }
+    var customTopicPrompt by remember { mutableStateOf("") }
+    var isGeneratingFlashcards by remember { mutableStateOf(false) }
 
-    val currentCard = deck.cards[currentIndex]
-    val rotation by animateFloatAsState(
+    val currentCard = currentCards.getOrNull(currentCardIndex)
+
+    val cardRotation by animateFloatAsState(
         targetValue = if (isFlipped) 180f else 0f,
-        animationSpec = tween(400),
-        label = "card_flip"
+        animationSpec = tween(durationMillis = 400),
+        label = "flashcard_rotation"
     )
 
-    Scaffold(
-        topBar = {
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 16.dp, vertical = 8.dp),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                IconButton(onClick = onExit) {
-                    Icon(Icons.Default.Close, contentDescription = "Exit Deck")
-                }
-                Text(
-                    text = deck.title,
-                    style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
-                    maxLines = 1
-                )
-                Text(
-                    text = "${currentIndex + 1}/${deck.cards.size}",
-                    style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Bold),
-                    color = MaterialTheme.colorScheme.primary
-                )
-            }
+    LazyColumn(
+        modifier = Modifier
+            .fillMaxSize()
+            .padding(16.dp),
+        verticalArrangement = Arrangement.spacedBy(16.dp),
+        horizontalAlignment = Alignment.CenterHorizontally
+    ) {
+        item {
+            Text(
+                text = "Flashcard Studio",
+                style = MaterialTheme.typography.headlineSmall.copy(fontWeight = FontWeight.Bold),
+                modifier = Modifier.fillMaxWidth()
+            )
+            Text(
+                text = "Master formulas, theorems, and vocabulary with 3D flip review.",
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.fillMaxWidth()
+            )
         }
-    ) { padding ->
-        if (isCompleted) {
-            Column(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .padding(padding)
-                    .padding(24.dp),
-                horizontalAlignment = Alignment.CenterHorizontally,
-                verticalArrangement = Arrangement.Center
-            ) {
-                Box(
-                    modifier = Modifier
-                        .size(90.dp)
-                        .clip(CircleShape)
-                        .background(Color(0xFF10B981).copy(alpha = 0.15f)),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Icon(Icons.Default.CheckCircle, contentDescription = null, tint = Color(0xFF10B981), modifier = Modifier.size(50.dp))
-                }
 
-                Spacer(modifier = Modifier.height(16.dp))
-
-                Text(
-                    text = "Study Set Complete! 🎉",
-                    style = MaterialTheme.typography.headlineMedium.copy(fontWeight = FontWeight.Bold)
-                )
-
-                Spacer(modifier = Modifier.height(8.dp))
-
-                Text(
-                    text = "Mastered ${masteredIds.size} of ${deck.cards.size} Cards",
-                    style = MaterialTheme.typography.titleMedium,
-                    color = MaterialTheme.colorScheme.primary
-                )
-
-                Spacer(modifier = Modifier.height(24.dp))
-
-                Button(
-                    onClick = {
-                        currentIndex = 0
-                        isFlipped = false
-                        isCompleted = false
-                    },
-                    modifier = Modifier.fillMaxWidth().height(48.dp)
-                ) {
-                    Icon(Icons.Default.Refresh, contentDescription = null)
-                    Spacer(modifier = Modifier.width(8.dp))
-                    Text("Review Deck Again")
-                }
-
-                Spacer(modifier = Modifier.height(10.dp))
-
-                OutlinedButton(onClick = onExit, modifier = Modifier.fillMaxWidth().height(48.dp)) {
-                    Text("Return to Flashcard Studio")
-                }
-            }
-        } else {
-            Column(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .padding(padding)
-                    .padding(20.dp),
-                horizontalAlignment = Alignment.CenterHorizontally
-            ) {
-                // Progress
-                LinearProgressIndicator(
-                    progress = { (currentIndex + 1).toFloat() / deck.cards.size },
-                    modifier = Modifier.fillMaxWidth().height(6.dp).clip(RoundedCornerShape(3.dp))
-                )
-
-                Spacer(modifier = Modifier.height(14.dp))
-
-                Text(
-                    text = "Tap Card to Flip",
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.outline
-                )
-
-                Spacer(modifier = Modifier.height(16.dp))
-
-                // 3D Flip Card
-                Box(
+        // Active Flashcard Container
+        if (currentCard != null) {
+            item {
+                Card(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .weight(1f)
+                        .height(240.dp)
                         .graphicsLayer {
-                            rotationY = rotation
+                            rotationY = cardRotation
                             cameraDistance = 12f * density
                         }
                         .clickable {
                             isFlipped = !isFlipped
                             showHint = false
                         }
+                        .testTag("flashcard_3d_card"),
+                    shape = RoundedCornerShape(20.dp),
+                    colors = CardDefaults.cardColors(
+                        containerColor = if (isFlipped) MaterialTheme.colorScheme.secondaryContainer else MaterialTheme.colorScheme.surface
+                    ),
+                    elevation = CardDefaults.cardElevation(defaultElevation = 4.dp)
                 ) {
-                    if (rotation <= 90f) {
-                        // FRONT
-                        Card(
-                            modifier = Modifier.fillMaxSize(),
-                            shape = RoundedCornerShape(20.dp),
-                            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.7f))
+                    Box(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .padding(20.dp),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Column(
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                            verticalArrangement = Arrangement.Center
                         ) {
-                            Column(
-                                modifier = Modifier
-                                    .fillMaxSize()
-                                    .padding(24.dp),
-                                horizontalAlignment = Alignment.CenterHorizontally,
-                                verticalArrangement = Arrangement.Center
-                            ) {
-                                Surface(
-                                    color = MaterialTheme.colorScheme.primaryContainer,
-                                    shape = RoundedCornerShape(8.dp)
-                                ) {
-                                    Text(
-                                        text = currentCard.category,
-                                        style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold),
-                                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
-                                    )
+                            Text(
+                                text = if (cardRotation <= 90f) "QUESTION / PROMPT" else "ANSWER / FORMULA",
+                                style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold),
+                                color = if (cardRotation <= 90f) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.secondary
+                            )
+
+                            Spacer(modifier = Modifier.height(16.dp))
+
+                            Text(
+                                text = if (cardRotation <= 90f) currentCard.front else currentCard.back,
+                                style = MaterialTheme.typography.titleMedium.copy(
+                                    fontWeight = FontWeight.Bold,
+                                    lineHeight = 24.sp
+                                ),
+                                textAlign = TextAlign.Center,
+                                modifier = Modifier.graphicsLayer {
+                                    // Invert text horizontally when flipped so it reads correctly
+                                    if (cardRotation > 90f) rotationY = 180f
                                 }
+                            )
 
-                                Spacer(modifier = Modifier.height(24.dp))
-
+                            if (showHint && currentCard.hint != null && cardRotation <= 90f) {
+                                Spacer(modifier = Modifier.height(10.dp))
                                 Text(
-                                    text = currentCard.frontQuestion,
-                                    style = MaterialTheme.typography.headlineSmall.copy(fontWeight = FontWeight.Bold),
-                                    textAlign = TextAlign.Center,
-                                    lineHeight = 32.sp
+                                    text = "💡 Hint: ${currentCard.hint}",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.secondary
                                 )
-
-                                if (currentCard.hint != null) {
-                                    Spacer(modifier = Modifier.height(20.dp))
-                                    if (showHint) {
-                                        Text(
-                                            text = "💡 Hint: ${currentCard.hint}",
-                                            style = MaterialTheme.typography.bodySmall,
-                                            color = MaterialTheme.colorScheme.primary
-                                        )
-                                    } else {
-                                        TextButton(onClick = { showHint = true }) {
-                                            Text("Show Hint", fontSize = 12.sp)
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    } else {
-                        // BACK (mirror rotation fix)
-                        Card(
-                            modifier = Modifier
-                                .fillMaxSize()
-                                .graphicsLayer { rotationY = 180f },
-                            shape = RoundedCornerShape(20.dp),
-                            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.4f))
-                        ) {
-                            Column(
-                                modifier = Modifier
-                                    .fillMaxSize()
-                                    .padding(24.dp),
-                                horizontalAlignment = Alignment.CenterHorizontally,
-                                verticalArrangement = Arrangement.Center
-                            ) {
-                                Text(
-                                    text = "Explanation & Answer",
-                                    style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Bold),
-                                    color = MaterialTheme.colorScheme.primary
-                                )
-
-                                Spacer(modifier = Modifier.height(16.dp))
-
-                                Text(
-                                    text = currentCard.backAnswer,
-                                    style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.SemiBold),
-                                    textAlign = TextAlign.Center,
-                                    lineHeight = 26.sp
-                                )
-
-                                if (currentCard.formulaOrRule != null) {
-                                    Spacer(modifier = Modifier.height(16.dp))
-                                    Surface(
-                                        color = MaterialTheme.colorScheme.surface,
-                                        shape = RoundedCornerShape(8.dp)
-                                    ) {
-                                        Text(
-                                            text = currentCard.formulaOrRule!!,
-                                            style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Bold),
-                                            color = MaterialTheme.colorScheme.primary,
-                                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp)
-                                        )
-                                    }
-                                }
                             }
                         }
                     }
                 }
+            }
 
-                Spacer(modifier = Modifier.height(24.dp))
-
-                // Actions: Need Review vs Mastered
+            // Card Navigation & Action Controls
+            item {
                 Row(
                     modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(16.dp)
-                ) {
-                    OutlinedButton(
-                        onClick = {
-                            isFlipped = false
-                            showHint = false
-                            if (currentIndex < deck.cards.size - 1) {
-                                currentIndex++
-                            } else {
-                                isCompleted = true
-                            }
-                        },
-                        shape = RoundedCornerShape(12.dp),
-                        modifier = Modifier.weight(1f).height(48.dp)
-                    ) {
-                        Text("Need Review 🔁")
-                    }
-
-                    Button(
-                        onClick = {
-                            if (!masteredIds.contains(currentCard.id)) {
-                                masteredIds.add(currentCard.id)
-                            }
-                            isFlipped = false
-                            showHint = false
-                            if (currentIndex < deck.cards.size - 1) {
-                                currentIndex++
-                            } else {
-                                isCompleted = true
-                            }
-                        },
-                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF10B981)),
-                        shape = RoundedCornerShape(12.dp),
-                        modifier = Modifier.weight(1f).height(48.dp)
-                    ) {
-                        Text("Mastered ✅")
-                    }
-                }
-            }
-        }
-    }
-}
-
-@Composable
-fun MockPaperGeneratorModal(
-    isLoading: Boolean,
-    onDismiss: () -> Unit,
-    onGenerate: (MockPaperConfig) -> Unit
-) {
-    var board by remember { mutableStateOf("GSEB") }
-    var classLevel by remember { mutableStateOf("Class 10") }
-    var subject by remember { mutableStateOf("Mathematics") }
-    var language by remember { mutableStateOf("English") }
-    var totalMarks by remember { mutableIntStateOf(80) }
-    var duration by remember { mutableIntStateOf(180) }
-    var difficulty by remember { mutableStateOf("Standard Board") }
-
-    AlertDialog(
-        onDismissRequest = { if (!isLoading) onDismiss() },
-        title = {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Icon(Icons.Default.AutoAwesome, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
-                Spacer(modifier = Modifier.width(8.dp))
-                Text("Configure AI Mock Paper")
-            }
-        },
-        text = {
-            Column(modifier = Modifier.verticalScroll(rememberScrollState())) {
-                Text(text = "Education Board", style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold))
-                LazyRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                    items(listOf("GSEB", "CBSE", "State Board")) { b ->
-                        FilterChip(selected = board == b, onClick = { board = b }, label = { Text(b) })
-                    }
-                }
-
-                Spacer(modifier = Modifier.height(10.dp))
-
-                Text(text = "Class & Stream", style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold))
-                LazyRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                    items(listOf("Class 10", "Class 9", "Class 12 Science", "Class 11 Science")) { c ->
-                        FilterChip(selected = classLevel == c, onClick = { classLevel = c }, label = { Text(c) })
-                    }
-                }
-
-                Spacer(modifier = Modifier.height(10.dp))
-
-                Text(text = "Subject", style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold))
-                LazyRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                    items(listOf("Mathematics", "Science", "Physics", "Chemistry", "Social Science", "Gujarati")) { s ->
-                        FilterChip(selected = subject == s, onClick = { subject = s }, label = { Text(s) })
-                    }
-                }
-
-                Spacer(modifier = Modifier.height(10.dp))
-
-                Text(text = "Language & Format", style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold))
-                LazyRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                    items(listOf("English", "Gujarati", "Hindi")) { l ->
-                        FilterChip(selected = language == l, onClick = { language = l }, label = { Text(l) })
-                    }
-                }
-
-                Spacer(modifier = Modifier.height(10.dp))
-
-                Text(text = "Marks & Duration", style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold))
-                LazyRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                    items(listOf(Triple(25, 45, "25M (Unit Test)"), Triple(50, 90, "50M (Midterm)"), Triple(80, 180, "80M (Board Exam)"))) { (m, d, label) ->
-                        FilterChip(
-                            selected = totalMarks == m,
-                            onClick = {
-                                totalMarks = m
-                                duration = d
-                            },
-                            label = { Text(label) }
-                        )
-                    }
-                }
-
-                if (isLoading) {
-                    Spacer(modifier = Modifier.height(16.dp))
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        CircularProgressIndicator(modifier = Modifier.size(20.dp))
-                        Spacer(modifier = Modifier.width(10.dp))
-                        Text("Drafting verified exam paper...", style = MaterialTheme.typography.bodySmall)
-                    }
-                }
-            }
-        },
-        confirmButton = {
-            Button(
-                onClick = {
-                    onGenerate(
-                        MockPaperConfig(
-                            board = board,
-                            classLevel = classLevel,
-                            subject = subject,
-                            language = language,
-                            totalMarks = totalMarks,
-                            durationMinutes = duration,
-                            difficulty = difficulty
-                        )
-                    )
-                },
-                enabled = !isLoading
-            ) {
-                Text("Generate Mock Paper")
-            }
-        },
-        dismissButton = {
-            TextButton(onClick = onDismiss, enabled = !isLoading) {
-                Text("Cancel")
-            }
-        }
-    )
-}
-
-@Composable
-fun ActiveQuizView(
-    title: String,
-    questions: List<QuestionItem>,
-    onQuizFinished: (score: Int, total: Int, accuracy: Int, weakTopics: List<String>) -> Unit,
-    onExitQuiz: () -> Unit
-) {
-    var currentIndex by remember { mutableIntStateOf(0) }
-    var selectedOption by remember { mutableStateOf<Int?>(null) }
-    var isAnswerSubmitted by remember { mutableStateOf(false) }
-    var correctCount by remember { mutableIntStateOf(0) }
-    var showResults by remember { mutableStateOf(false) }
-    var secondsRemaining by remember { mutableIntStateOf(questions.size * 60) }
-    val weakTopics = remember { mutableListOf<String>() }
-
-    LaunchedEffect(showResults) {
-        if (!showResults) {
-            while (secondsRemaining > 0) {
-                delay(1000L)
-                secondsRemaining--
-            }
-            showResults = true
-            val acc = if (questions.isNotEmpty()) (correctCount * 100) / questions.size else 0
-            onQuizFinished(correctCount, questions.size, acc, weakTopics)
-        }
-    }
-
-    if (showResults) {
-        val accuracy = if (questions.isNotEmpty()) (correctCount * 100) / questions.size else 0
-        Column(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(24.dp)
-                .verticalScroll(rememberScrollState()),
-            horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.Center
-        ) {
-            Box(
-                modifier = Modifier
-                    .size(96.dp)
-                    .clip(CircleShape)
-                    .background(if (accuracy >= 60) Color(0xFF10B981).copy(alpha = 0.15f) else MaterialTheme.colorScheme.primary.copy(alpha = 0.15f)),
-                contentAlignment = Alignment.Center
-            ) {
-                Icon(
-                    imageVector = Icons.Default.CheckCircle,
-                    contentDescription = null,
-                    tint = if (accuracy >= 60) Color(0xFF10B981) else MaterialTheme.colorScheme.primary,
-                    modifier = Modifier.size(54.dp)
-                )
-            }
-
-            Spacer(modifier = Modifier.height(20.dp))
-
-            Text(
-                text = "Test Completed!",
-                style = MaterialTheme.typography.headlineMedium.copy(fontWeight = FontWeight.Bold)
-            )
-
-            Spacer(modifier = Modifier.height(8.dp))
-
-            Text(
-                text = "Score: $correctCount out of ${questions.size} ($accuracy% Accuracy)",
-                style = MaterialTheme.typography.titleMedium,
-                color = MaterialTheme.colorScheme.primary
-            )
-
-            Spacer(modifier = Modifier.height(24.dp))
-
-            Card(
-                shape = RoundedCornerShape(16.dp),
-                modifier = Modifier.fillMaxWidth(),
-                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f))
-            ) {
-                Column(modifier = Modifier.padding(16.dp)) {
-                    Text(
-                        text = "Performance Breakdown:",
-                        style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.Bold)
-                    )
-                    Spacer(modifier = Modifier.height(8.dp))
-                    Text(text = "• Correct Answers: $correctCount", style = MaterialTheme.typography.bodyMedium)
-                    Text(text = "• Incorrect / Skipped: ${questions.size - correctCount}", style = MaterialTheme.typography.bodyMedium)
-                    Text(
-                        text = if (accuracy >= 75) "• Performance: Excellent! Ready for board exam." else "• Performance: Review weak topics and retry.",
-                        style = MaterialTheme.typography.bodyMedium
-                    )
-                }
-            }
-
-            Spacer(modifier = Modifier.height(28.dp))
-
-            Button(
-                onClick = onExitQuiz,
-                modifier = Modifier.fillMaxWidth().height(50.dp)
-            ) {
-                Text("Return to Practice Hub")
-            }
-        }
-    } else {
-        val currentQuestion = questions[currentIndex]
-
-        Scaffold(
-            topBar = {
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = 16.dp, vertical = 8.dp),
                     horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    IconButton(onClick = onExitQuiz) {
-                        Icon(Icons.Default.Close, contentDescription = "Exit Quiz")
+                    IconButton(onClick = {
+                        if (currentCardIndex > 0) {
+                            currentCardIndex--
+                            isFlipped = false
+                            showHint = false
+                        }
+                    }) {
+                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Previous Card")
                     }
+
                     Text(
-                        text = title,
-                        style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
-                        maxLines = 1,
-                        modifier = Modifier.weight(1f, fill = false).padding(horizontal = 8.dp)
+                        text = "Card ${currentCardIndex + 1} of ${currentCards.size}",
+                        style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.SemiBold)
                     )
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Icon(Icons.Default.HourglassTop, contentDescription = null, modifier = Modifier.size(16.dp), tint = MaterialTheme.colorScheme.primary)
-                        Spacer(modifier = Modifier.width(4.dp))
-                        Text(
-                            text = "${secondsRemaining / 60}:${(secondsRemaining % 60).toString().padStart(2, '0')}",
-                            style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Bold),
-                            color = MaterialTheme.colorScheme.primary
-                        )
+
+                    // TTS button
+                    IconButton(onClick = {
+                        val textToSpeak = if (isFlipped) currentCard.back else currentCard.front
+                        tts?.speak(textToSpeak, TextToSpeech.QUEUE_FLUSH, null, "card_tts")
+                    }) {
+                        Icon(Icons.Default.VolumeUp, contentDescription = "Listen")
+                    }
+
+                    // Hint button
+                    IconButton(onClick = { showHint = !showHint }) {
+                        Icon(Icons.Default.HelpOutline, contentDescription = "Hint")
+                    }
+
+                    IconButton(onClick = {
+                        if (currentCardIndex < currentCards.size - 1) {
+                            currentCardIndex++
+                            isFlipped = false
+                            showHint = false
+                        }
+                    }) {
+                        Icon(Icons.Default.FlipCameraAndroid, contentDescription = "Next Card")
                     }
                 }
             }
-        ) { padding ->
-            Column(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .padding(padding)
-                    .padding(16.dp)
-                    .verticalScroll(rememberScrollState())
+        }
+
+        // Generate AI Flashcard Set
+        item {
+            Card(
+                shape = RoundedCornerShape(16.dp),
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)),
+                modifier = Modifier.fillMaxWidth()
             ) {
-                LinearProgressIndicator(
-                    progress = { (currentIndex + 1).toFloat() / questions.size },
-                    modifier = Modifier.fillMaxWidth().height(6.dp).clip(RoundedCornerShape(3.dp))
-                )
-
-                Spacer(modifier = Modifier.height(16.dp))
-
-                Text(
-                    text = "Question ${currentIndex + 1} of ${questions.size}",
-                    style = MaterialTheme.typography.labelMedium,
-                    color = MaterialTheme.colorScheme.primary
-                )
-
-                Spacer(modifier = Modifier.height(8.dp))
-
-                Text(
-                    text = currentQuestion.questionText,
-                    style = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.SemiBold),
-                    lineHeight = 28.sp
-                )
-
-                Spacer(modifier = Modifier.height(24.dp))
-
-                currentQuestion.options.forEachIndexed { index, option ->
-                    val isSelected = selectedOption == index
-                    val isCorrect = index == currentQuestion.correctIndex
-
-                    val borderColor = when {
-                        !isAnswerSubmitted && isSelected -> MaterialTheme.colorScheme.primary
-                        isAnswerSubmitted && isCorrect -> Color(0xFF10B981)
-                        isAnswerSubmitted && isSelected && !isCorrect -> MaterialTheme.colorScheme.error
-                        else -> MaterialTheme.colorScheme.outlineVariant
+                Column(modifier = Modifier.padding(16.dp)) {
+                    Text(
+                        text = "Generate AI Study Cards",
+                        style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.Bold)
+                    )
+                    Spacer(modifier = Modifier.height(8.dp))
+                    OutlinedTextField(
+                        value = customTopicPrompt,
+                        onValueChange = { customTopicPrompt = it },
+                        placeholder = { Text("e.g., Trigonometry Identities, Ohm's Law, Sandhi") },
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = RoundedCornerShape(10.dp),
+                        singleLine = true
+                    )
+                    Spacer(modifier = Modifier.height(10.dp))
+                    Button(
+                        onClick = {
+                            if (customTopicPrompt.isNotBlank()) {
+                                isGeneratingFlashcards = true
+                                scope.launch {
+                                    val newCards = aiService.generateFlashcards(customTopicPrompt)
+                                    currentCards = newCards
+                                    currentCardIndex = 0
+                                    isFlipped = false
+                                    isGeneratingFlashcards = false
+                                }
+                            }
+                        },
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = RoundedCornerShape(10.dp),
+                        enabled = !isGeneratingFlashcards
+                    ) {
+                        Icon(Icons.Default.AutoAwesome, contentDescription = null)
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text(if (isGeneratingFlashcards) "Generating Cards..." else "Generate Study Deck")
                     }
+                }
+            }
+        }
+    }
+}
 
-                    val containerColor = when {
-                        !isAnswerSubmitted && isSelected -> MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.3f)
-                        isAnswerSubmitted && isCorrect -> Color(0xFF10B981).copy(alpha = 0.15f)
-                        isAnswerSubmitted && isSelected && !isCorrect -> MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.2f)
-                        else -> MaterialTheme.colorScheme.surface
-                    }
+@Composable
+fun TimedQuizTab(
+    aiService: AiStudyAssistantService,
+    repository: EduSphereRepository
+) {
+    val scope = rememberCoroutineScope()
+    var quizTopic by remember { mutableStateOf("Real Numbers") }
+    var questions by remember {
+        mutableStateOf(
+            listOf(
+                QuizQuestion(
+                    id = "q1",
+                    question = "What is the HCF of two prime numbers a and b?",
+                    options = listOf("0", "1", "a × b", "a + b"),
+                    correctIndex = 1,
+                    explanation = "Prime numbers share no common factors other than 1.",
+                    chapter = "Real Numbers"
+                ),
+                QuizQuestion(
+                    id = "q2",
+                    question = "If α and β are zeroes of ax² + bx + c, then α + β is:",
+                    options = listOf("b/a", "-b/a", "c/a", "-c/a"),
+                    correctIndex = 1,
+                    explanation = "Sum of zeroes = -(coefficient of x) / (coefficient of x²) = -b/a.",
+                    chapter = "Polynomials"
+                ),
+                QuizQuestion(
+                    id = "q3",
+                    question = "Which law states that mass cannot be created or destroyed in a reaction?",
+                    options = listOf("Law of Constant Proportions", "Law of Conservation of Mass", "Avogadro's Law", "Boyle's Law"),
+                    correctIndex = 1,
+                    explanation = "Lavoisier formulated the Law of Conservation of Mass.",
+                    chapter = "Chemical Reactions"
+                )
+            )
+        )
+    }
 
-                    Card(
+    var currentQuestionIdx by remember { mutableIntStateOf(0) }
+    var selectedOptionIdx by remember { mutableStateOf<Int?>(null) }
+    var isSubmitted by remember { mutableStateOf(false) }
+    var score by remember { mutableIntStateOf(0) }
+    var quizCompleted by remember { mutableStateOf(false) }
+
+    val currentQ = questions.getOrNull(currentQuestionIdx)
+
+    LazyColumn(
+        modifier = Modifier
+            .fillMaxSize()
+            .padding(16.dp),
+        verticalArrangement = Arrangement.spacedBy(16.dp)
+    ) {
+        item {
+            Text(
+                text = "Interactive Timed Quizzes",
+                style = MaterialTheme.typography.headlineSmall.copy(fontWeight = FontWeight.Bold)
+            )
+            Text(
+                text = "Test your board exam preparation with validated scoring & answer explanations.",
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
+
+        if (quizCompleted) {
+            item {
+                Card(
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(20.dp),
+                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer)
+                ) {
+                    Column(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .padding(vertical = 6.dp)
-                            .border(1.5.dp, borderColor, RoundedCornerShape(12.dp))
-                            .clickable(enabled = !isAnswerSubmitted) { selectedOption = index },
-                        colors = CardDefaults.cardColors(containerColor = containerColor),
-                        shape = RoundedCornerShape(12.dp)
+                            .padding(24.dp),
+                        horizontalAlignment = Alignment.CenterHorizontally
                     ) {
-                        Row(
-                            modifier = Modifier.padding(16.dp),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Box(
-                                modifier = Modifier
-                                    .size(32.dp)
-                                    .clip(CircleShape)
-                                    .background(borderColor.copy(alpha = 0.2f)),
-                                contentAlignment = Alignment.Center
-                            ) {
-                                Text(
-                                    text = ('A' + index).toString(),
-                                    fontWeight = FontWeight.Bold,
-                                    color = borderColor
-                                )
-                            }
-                            Spacer(modifier = Modifier.width(14.dp))
-                            Text(text = option, style = MaterialTheme.typography.bodyLarge, modifier = Modifier.weight(1f))
-                        }
-                    }
-                }
-
-                Spacer(modifier = Modifier.height(16.dp))
-
-                AnimatedVisibility(visible = isAnswerSubmitted) {
-                    Card(
-                        modifier = Modifier.fillMaxWidth(),
-                        shape = RoundedCornerShape(12.dp),
-                        colors = CardDefaults.cardColors(
-                            containerColor = if (selectedOption == currentQuestion.correctIndex) Color(0xFF10B981).copy(alpha = 0.12f)
-                            else MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.3f)
+                        Text(
+                            text = "🎉 Quiz Completed!",
+                            style = MaterialTheme.typography.headlineSmall.copy(fontWeight = FontWeight.Bold)
                         )
-                    ) {
-                        Column(modifier = Modifier.padding(14.dp)) {
-                            Text(
-                                text = if (selectedOption == currentQuestion.correctIndex) "✓ Correct Answer!" else "✗ Incorrect",
-                                fontWeight = FontWeight.Bold,
-                                color = if (selectedOption == currentQuestion.correctIndex) Color(0xFF047857) else MaterialTheme.colorScheme.error
-                            )
-                            Spacer(modifier = Modifier.height(4.dp))
-                            Text(
-                                text = currentQuestion.explanation,
-                                style = MaterialTheme.typography.bodyMedium,
-                                color = MaterialTheme.colorScheme.onSurface
-                            )
+                        Spacer(modifier = Modifier.height(8.dp))
+                        Text(
+                            text = "Your Score: $score / ${questions.size}",
+                            style = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.Bold)
+                        )
+                        val pct = (score.toFloat() / questions.size.toFloat()) * 100f
+                        Text(
+                            text = "${pct.toInt()}% Accuracy Recorded to Profile Report",
+                            style = MaterialTheme.typography.bodyMedium
+                        )
+
+                        Spacer(modifier = Modifier.height(16.dp))
+
+                        Button(
+                            onClick = {
+                                currentQuestionIdx = 0
+                                selectedOptionIdx = null
+                                isSubmitted = false
+                                score = 0
+                                quizCompleted = false
+                            },
+                            shape = RoundedCornerShape(10.dp)
+                        ) {
+                            Text("Retake Quiz")
                         }
                     }
                 }
+            }
+        } else if (currentQ != null) {
+            item {
+                Card(
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(16.dp),
+                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
+                ) {
+                    Column(modifier = Modifier.padding(16.dp)) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween
+                        ) {
+                            Text(
+                                text = "Question ${currentQuestionIdx + 1} of ${questions.size}",
+                                style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Bold),
+                                color = MaterialTheme.colorScheme.primary
+                            )
+                            Text(
+                                text = "Topic: ${currentQ.chapter}",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
 
-                Spacer(modifier = Modifier.height(24.dp))
+                        Spacer(modifier = Modifier.height(12.dp))
 
-                if (!isAnswerSubmitted) {
-                    Button(
-                        onClick = {
-                            isAnswerSubmitted = true
-                            if (selectedOption == currentQuestion.correctIndex) {
-                                correctCount++
-                            } else {
-                                weakTopics.add(currentQuestion.questionText.take(20))
+                        Text(
+                            text = currentQ.question,
+                            style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold)
+                        )
+
+                        Spacer(modifier = Modifier.height(16.dp))
+
+                        currentQ.options.forEachIndexed { idx, opt ->
+                            val isSelected = selectedOptionIdx == idx
+                            val isCorrect = idx == currentQ.correctIndex
+
+                            val backgroundColor = when {
+                                isSubmitted && isCorrect -> Color(0xFFD1FAE5)
+                                isSubmitted && isSelected && !isCorrect -> Color(0xFFFEE2E2)
+                                isSelected -> MaterialTheme.colorScheme.primaryContainer
+                                else -> MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.3f)
                             }
-                        },
-                        enabled = selectedOption != null,
-                        modifier = Modifier.fillMaxWidth().height(48.dp),
-                        shape = RoundedCornerShape(12.dp)
-                    ) {
-                        Text("Check Answer")
-                    }
-                } else {
-                    Button(
-                        onClick = {
-                            if (currentIndex < questions.size - 1) {
-                                currentIndex++
-                                selectedOption = null
-                                isAnswerSubmitted = false
-                            } else {
-                                showResults = true
-                                val acc = if (questions.isNotEmpty()) (correctCount * 100) / questions.size else 0
-                                onQuizFinished(correctCount, questions.size, acc, weakTopics)
+
+                            Card(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(vertical = 4.dp)
+                                    .clickable(enabled = !isSubmitted) { selectedOptionIdx = idx },
+                                shape = RoundedCornerShape(10.dp),
+                                colors = CardDefaults.cardColors(containerColor = backgroundColor)
+                            ) {
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(12.dp),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Text(
+                                        text = "${('A' + idx)}. $opt",
+                                        style = MaterialTheme.typography.bodyMedium.copy(
+                                            fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal
+                                        )
+                                    )
+                                }
                             }
-                        },
-                        modifier = Modifier.fillMaxWidth().height(48.dp),
-                        shape = RoundedCornerShape(12.dp)
-                    ) {
-                        Text(if (currentIndex < questions.size - 1) "Next Question →" else "View Results")
+                        }
+
+                        if (isSubmitted) {
+                            Spacer(modifier = Modifier.height(12.dp))
+                            Card(
+                                shape = RoundedCornerShape(10.dp),
+                                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
+                            ) {
+                                Column(modifier = Modifier.padding(10.dp)) {
+                                    Text(
+                                        text = "Explanation:",
+                                        style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold)
+                                    )
+                                    Text(
+                                        text = currentQ.explanation,
+                                        style = MaterialTheme.typography.bodySmall
+                                    )
+                                }
+                            }
+                        }
+
+                        Spacer(modifier = Modifier.height(16.dp))
+
+                        if (!isSubmitted) {
+                            Button(
+                                onClick = {
+                                    if (selectedOptionIdx != null) {
+                                        isSubmitted = true
+                                        if (selectedOptionIdx == currentQ.correctIndex) {
+                                            score++
+                                        }
+                                    }
+                                },
+                                modifier = Modifier.align(Alignment.End),
+                                enabled = selectedOptionIdx != null,
+                                shape = RoundedCornerShape(8.dp)
+                            ) {
+                                Text("Submit Answer")
+                            }
+                        } else {
+                            Button(
+                                onClick = {
+                                    if (currentQuestionIdx < questions.size - 1) {
+                                        currentQuestionIdx++
+                                        selectedOptionIdx = null
+                                        isSubmitted = false
+                                    } else {
+                                        quizCompleted = true
+                                        scope.launch {
+                                            val attempt = QuizAttempt(
+                                                id = UUID.randomUUID().toString(),
+                                                quizTitle = "$quizTopic Speed Quiz",
+                                                subject = "Core",
+                                                score = score,
+                                                totalQuestions = questions.size,
+                                                percentage = (score.toFloat() / questions.size) * 100f
+                                            )
+                                            repository.saveQuizResult(attempt)
+                                        }
+                                    }
+                                },
+                                modifier = Modifier.align(Alignment.End),
+                                shape = RoundedCornerShape(8.dp)
+                            ) {
+                                Text(if (currentQuestionIdx < questions.size - 1) "Next Question" else "Finish Quiz")
+                            }
+                        }
                     }
                 }
             }
