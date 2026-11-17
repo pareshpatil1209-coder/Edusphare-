@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "955352123010",
+    "project_id": "edusphare-android",
+    "storage_bucket": "edusphare-android.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:955352123010:android:12372a99a0b5bb9c8c569b",
+        "android_client_info": {
+          "package_name": "com.aistudio.edusphere.learn"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyCr2gInktYtRI2o6uydgbVq15P2Sxocgi8"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
